@@ -1,10 +1,10 @@
 # Architecture
 
-Status: FitNotes discovery recommendations accepted on 2026-11-09. No application
-code or DDL implemented; unverified source mappings remain validation gates.
+Status: FitNotes ingestion and reporting are implemented. Unverified source
+mappings remain validation gates.
 
 The first backup has now been inspected: see [FitNotes discovery](fitnotes-discovery.md).
-The accepted design keeps four tables, preserves source flags/type codes, and starts
+The target design keeps four tables, preserves source flags/type codes, and starts
 with a reps-focused report. Weight encodings and ID stability across backups remain
 unverified; the target model below does not imply a fully validated source contract.
 
@@ -45,11 +45,10 @@ flowchart LR
 
 The chat controller mediates every tool request. OpenAI has no direct database access.
 
-Adapters expose the same small callable contract: `import_file(path, connection,
-options) -> ImportReport`. Report inserted, updated, unchanged, rejected, and
-unsupported counts plus bounded diagnostics (row/source ID and reason, not full
-personal records). A shared report type is sufficient; no abstract base class or
-dynamic plugin registry. Source adapters own mapping; persistence owns writes.
+FitNotes exposes `import_file(source_path, destination_path, *, assume_performed=False)`.
+It returns inserted, updated, unchanged, rejected, and unsupported counts along
+with bounded aggregate diagnostics and separate warnings. The adapter owns source
+mapping and coordinates the transaction. Persistence owns the SQL writes.
 
 ## Target relational model
 
@@ -71,6 +70,15 @@ meaning is established. Store source schema version, relevant settings, and the
 explicit completion policy in the existing import `options_json`; no extra table.
 
 ### First importer contract
+
+Destination schema v1 checks the app-created table definitions and version.
+The FitNotes adapter owns both connection lifecycles so validation and file
+collision checks precede destination writes. It accepts standalone exports
+without SQLite sidecars, opens them read-only, and checks the hash across the
+read. Settings are optional audit context. All mapped set and exercise fields
+are required, and malformed values reject the row. Diagnostics aggregate fixed
+reasons without exposing record IDs. Exercise-only changes update the shared
+exercise definition. Set counts and last-change provenance track set payloads.
 
 Implement only `imports`, `exercises`, and `strength_sets` now; add the running
 table with Strava. Support the inspected SQLite `user_version=22` and validate

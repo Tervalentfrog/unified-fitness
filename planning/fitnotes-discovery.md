@@ -106,7 +106,7 @@ names, individual IDs, and rep values are intentionally omitted from this docume
   examples exist here. There is no source modification timestamp for conflict
   resolution. Preserve the documented latest-import-wins limitation.
 
-## Accepted adjustments (not implemented)
+## Accepted adjustments
 
 1. **Keep the four-table design.** Date-based sets fit this backup. Do not add a
    sessions table, copy the full source schema, or implement extra exercise types.
@@ -136,6 +136,6 @@ across an edit/reorder using a controlled test export. Do not change this origin
 backup. Unknown mappings remain unknown until that evidence exists.
 
 Implementation handoff: [handoff.md](handoff.md) and the architecture's first-importer
-contract bound the next milestone. Reps-only ingestion can proceed while unit
+contract describe the implemented milestone. Reps-only ingestion works while unit
 decoding and real cross-backup identity remain unverified; synthetic update tests
 must not be presented as proof of source ID stability.

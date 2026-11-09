@@ -1,7 +1,6 @@
 # Implementation plan
 
-Status: FitNotes discovery recommendations accepted on 2026-11-09; no importer
-implemented. Each milestone should
+Status: FitNotes ingestion and reporting are implemented and verified. Each milestone should
 leave a small working increment. Do not implement all source adapters before proving
 one complete import -> database -> deterministic report workflow.
 
@@ -9,7 +8,7 @@ FitNotes discovery is documented in [fitnotes-discovery.md](fitnotes-discovery.m
 Its schema and current records are inspected, but weight/unit encodings and ID
 stability across backups remain unverified. The accepted first report is sets,
 reps, and recorded training days; load-based progression waits for unit validation.
-No importer has been implemented, and Strava discovery has not started.
+Strava discovery has not started.
 
 | Priority | Milestone | Completion evidence |
 | --- | --- | --- |
@@ -55,18 +54,10 @@ after validating that source. Do not invent a FitNotes schema to keep coding.
 
 ## Immediate next task and prerequisites
 
-The discovery findings and source metadata fields are accepted. `py` now runs
-Python 3.14.10 successfully for read-only discovery; package installation remains
-unverified. Implement the bounded milestone specified in [handoff.md](handoff.md),
-starting with installation and synthetic fixtures. Test same-ID updates under an
-explicit stable-ID assumption; do not claim real cross-backup stability until it
-is observed. Weight encoding need not block reps-only reports, but must be established
-before adding normalized-load analytics. [next-session-prompt.md](next-session-prompt.md)
-contains the ready-to-paste implementation request.
-
-Needed before the relevant milestone: a FitNotes backup, a Strava personal export
-CSV, resolution of source timezone/unit ambiguities, and later an API key plus
-an account-accessible tool-capable model. None is needed to review this scaffold.
+The FitNotes slice passed the [milestone review](handoff.md#milestone-review).
+Next, validate a real Strava export, then add running ingestion and reporting
+once the CSV contract is understood. Confirm FitNotes weight encoding before implementing load-based reports
+and validate real ID behavior before promising updates across edited backups.
 
 ## Initialization verification
 

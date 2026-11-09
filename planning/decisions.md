@@ -4,7 +4,7 @@ FitNotes discovery recommendations accepted by the user on 2026-11-09. Remaining
 source uncertainties are validation work, not confirmed encoding assumptions.
 
 [FitNotes discovery](fitnotes-discovery.md) now records the first inspected backup
-and accepted model adjustments. Those decisions are not implemented.
+and accepted model adjustments. The first FitNotes slice implements those choices within the scope of the [handoff](handoff.md).
 
 | Decision | Reason / trade-off |
 | --- | --- |
@@ -42,7 +42,7 @@ and accepted model adjustments. Those decisions are not implemented.
 | Local-first can be mistaken for fully offline | Imports and reports stay local; AI questions and selected results leave the machine. Explain this boundary and review provider data handling at integration time. |
 | Model mistakes, injected source text, API failure/cost | Fixed read-only tools, application-side validation, bounded calls/results, fake API tests, visible errors, configurable model, and optional live evaluation. |
 | Personal files accidentally committed | Ignore data/exports/credentials, keep only invented fixtures, and inspect staged content. Arbitrary text files can still contain sensitive data. |
-| Python setup only partly verified | `py` now executes Python 3.14.10 for discovery; `python` still resolves to an unusable alias. Package installation and application tests remain unverified. |
+| Python setup only partly verified | `py` now executes Python 3.14.10 for discovery; `python` still resolves to an unusable alias. Installation and tests passed. See the handoff for sandbox setup details. |
 | Named timezone database unavailable on some systems | Check `zoneinfo` support when normalizing timestamps; add `tzdata` if needed, particularly on Windows. Never silently fall back to the machine timezone. |
 
 ## Open questions for source validation

@@ -14,7 +14,7 @@ Next milestone: FitNotes ingestion, repeatable imports, conservative normalizati
 essential tests, an argparse CLI, and a small sets/reps/training-days summary.
 Do not implement Strava, AI, workout sessions, web UI, sync, or weight analytics yet.
 
-## Actual repository state
+## Repository state at handoff preparation
 
 - Baseline includes `a783e17` (discovery and accepted decisions) and `2280931`
   (repository engineering guidelines). This handoff is being committed on `main`
@@ -87,7 +87,7 @@ records retain their recorded date and need no timezone conversion.
 - Reject incompatible source/destination schemas and same-file source/destination
   paths before writes. Do not silently reset databases or infer completion from flags.
 
-## Prioritized next steps
+## Original implementation steps
 
 1. Read repo instructions/status/docs/code; verify Python, create `.venv`, and install
    `.[dev]`. Inspect the private backup read-only without dumping personal records.
@@ -120,3 +120,60 @@ records retain their recorded date and need no timezone conversion.
 - Source hashes remain unchanged. Tests use invented data only; no exports, keys,
   personal records, or real-file-derived fixtures enter Git. Tests pass with actual
   commands/results reported; unrun checks or remaining source assumptions are explicit.
+
+
+## Milestone verification
+
+Completed on 2026-11-09 with Python 3.14.10 and pytest 9.2.0.
+
+- `py -m venv .venv` created the environment but its first pip bootstrap failed
+  in the sandbox. `.\.venv\Scripts\python.exe -m ensurepip --upgrade --default-pip`
+  succeeded with normal Windows permissions. A reinstall with
+  `--no-build-isolation` failed because setuptools was unavailable in the venv.
+  The standard `.\.venv\Scripts\python.exe -m pip install -e ".[dev]"` succeeded
+  with its isolated build and registered the CLI.
+- `.\.venv\Scripts\python.exe -m pytest` initially could not create the sandbox
+  temporary directory. An ignored workspace-local base temp allowed 24 tests
+  to pass, with the hard-link test blocked by the sandbox. The final standard
+  command under normal Windows permissions passed all 26 tests.
+- The installed `.\.venv\Scripts\unified-fitness.exe --help` returned 0.
+  Using the commands in [README](../README.md) with a fresh ignored database,
+  the private backup imported 24 sets, then reported 24 unchanged sets on
+  repeat. Both imports and summary returned 0. Summary reported one exercise
+  and five days. Repetitions matched source and destination SQL. The audit
+  contained two attempts and sets retained their original last-change
+  provenance. Zero completion flags and four pending flags were preserved.
+  The source SHA-256 was unchanged.
+- Every import requires the performed-set assertion. Missing mapped fields
+  fail preflight. Missing or invalid optional settings produce a warning and
+  empty settings metadata. Fatal attempts roll back. Rejected and unsupported
+  rows are reported by aggregate reason. Exit code 3 indicates a committed
+  import with exclusions.
+- Weight scaling, unit codes, flag semantics, and real ID stability across
+  edits, reorders, and restores remain unverified. Synthetic updates verify
+  destination behavior. When IDs match, the latest imported valid payload
+  wins, including payloads from older snapshots.
+
+
+## Milestone review
+
+The focused review found no critical defects requiring code changes. The
+Windows venv pytest command passed all 26 tests with normal filesystem
+permissions. A fresh ignored database imported 24 sets from the confirmed
+backup and returned 24 unchanged on repeat. Both database integrity checks
+returned ok, and the destination foreign-key check found no violations.
+The destination contained the three expected tables at schema version 1.
+
+Local row comparisons verified canonical text IDs, recorded dates, repetitions,
+raw load values and storage classes, exercise codes, and both flags. All
+unverified normalized fields remained NULL. The exercise and set rows matched
+before and after the repeat import, including provenance. Both audit entries
+recorded the source SHA-256 and performed-set assertion. The source SHA-256
+remained unchanged. The CLI summary reported one exercise and five days, and
+its repetition total matched source SQL.
+
+The v1 schema check expects the app-created definitions. Source parsing assumes
+a standalone export with no SQLite sidecars and holds accepted rows in memory.
+These constraints fit the current local workflow. Weight scaling, code semantics,
+and cross-backup ID stability remain open. The next milestone is Strava source
+validation followed by running ingestion once the export contract is verified.

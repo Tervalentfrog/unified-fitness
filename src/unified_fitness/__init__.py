@@ -1,1 +1,1 @@
-"""Unified Fitness package; application functionality is not implemented yet."""
+"""Local-first fitness history ingestion and reporting."""

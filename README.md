@@ -3,38 +3,53 @@
 A local-first, single-user application for importing FitNotes strength history and
 Strava running history into SQLite, then querying measured trends from a console.
 
-**Status: planning, initialization, and FitNotes discovery complete.** No importer, database schema, CLI,
-analytics, or OpenAI integration has been implemented. There is no runnable
-application command yet, and no application tests have been added.
+**Status:** FitNotes v22 ingestion and offline strength summaries are implemented.
 
 ## Development setup
 
-Use Python 3.11 or newer with pip and venv. From the repository root in PowerShell:
+Use Python 3.11 or newer. From the repository root in PowerShell:
 
-```powershell
-py --version
+~~~
 py -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -e ".[dev]"
-.\.venv\Scripts\python.exe -c "import unified_fitness"
-```
-
-On macOS/Linux, use `python3` to create the environment and
-`.venv/bin/python` for the remaining commands. Activating the environment is optional.
-
-Discovery environment (2026-11-09): `py` runs Python 3.14.10 and SQLite queries
-successfully, with a path-location warning. `python` still resolves to an unusable
-Windows App Execution Alias. Virtual-environment setup and package installation
-have not been validated on this machine.
-
-When the first feature tests exist, run:
-
-```powershell
 .\.venv\Scripts\python.exe -m pytest
-```
+~~~
 
-At this scaffold stage pytest would collect no tests (exit code 5); that is not a
-passing test suite. Runtime dependencies are empty. Add the OpenAI SDK only when
-implementing the AI milestone; ingestion and analytics will work offline.
+On macOS/Linux, use `python3 -m venv .venv` and `.venv/bin/python`.
+The application uses the Python standard library and runs offline.
+
+## Import and summarize
+
+Place a standalone FitNotes SQLite v22 export in `data/`. Replace
+`your-backup.fitnotes` with its filename. Use `--assume-performed` only
+after confirming the sets in that export were performed.
+
+~~~
+.\.venv\Scripts\unified-fitness.exe --help
+.\.venv\Scripts\unified-fitness.exe --db data/fitness.sqlite3 import-fitnotes data/your-backup.fitnotes --assume-performed
+.\.venv\Scripts\unified-fitness.exe --db data/fitness.sqlite3 summary
+~~~
+
+The default database path is `data/unified-fitness.sqlite3`. On macOS/Linux
+the command is `.venv/bin/unified-fitness`. Summary prints JSON with overall
+and per-exercise set and repetition totals and the overall count of distinct
+recorded training dates. Treat report output as personal data.
+
+The importer accepts valid type-0 rows with zero distance and duration. It
+preserves raw weights and codes and leaves normalized load, unit, load kind,
+and set order empty. Both raw flags are retained. Matching source IDs update
+the stored payload when it changes. Missing IDs are retained. Real ID stability
+across edits, reorders, and restores remains unverified, and importing an older
+snapshot can overwrite newer values for matching IDs.
+
+Import output counts inserted, updated, unchanged, rejected, and unsupported
+sets. Stderr gives counts by reason and separate warnings. Exit codes are 0
+for success, 1 for a fatal error, 2 for invalid usage, and 3 for a committed
+import with rejected or unsupported rows.
+
+The milestone review passed all 26 tests and verified two imports of the
+confirmed backup into a fresh database. See the [review results](planning/handoff.md#milestone-review)
+for the integrity, normalization, and repeat-import checks.
 
 ## Configuration and privacy
 
@@ -56,7 +71,7 @@ Chat will disclose the data flow before use; offline reports remain available.
 
 ```text
 planning/                 Architecture, milestones, and decisions
-src/unified_fitness/       Python package (package marker only)
+src/unified_fitness/       FitNotes ingestion, storage, CLI and summaries
 tests/fixtures/            Guidance for future synthetic test data
 data/                     Ignored local personal data
 .env.example              Proposed environment settings
@@ -72,5 +87,4 @@ README.md                 Setup and project status
 - [Implementation handoff](planning/handoff.md)
 - [Ready-to-paste next-session prompt](planning/next-session-prompt.md)
 
-Next: implement the bounded FitNotes import/summary workflow described in the
-handoff. Normalize IDs/dates/reps; keep load conversions unknown until validated.
+Next milestone: validate a Strava export before adding running ingestion.

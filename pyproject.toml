@@ -13,6 +13,9 @@ dependencies = []
 [project.optional-dependencies]
 dev = ["pytest>=8"]
 
+[project.scripts]
+unified-fitness = 'unified_fitness.cli:main'
+
 [tool.setuptools.packages.find]
 where = ["src"]
 
