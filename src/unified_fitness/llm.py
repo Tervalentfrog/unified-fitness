@@ -3,6 +3,7 @@
 import json
 import os
 import sqlite3
+from pathlib import Path
 
 from .analytics import report_dates, weekly_summary
 from .db import FitnessError
@@ -118,11 +119,34 @@ def answer(client, model, path, question):
     print(final.output_text)
 
 
+def chat_settings():
+    names = ("OPENAI_API_KEY", "OPENAI_MODEL")
+    settings = {name: os.environ[name] for name in names if name in os.environ}
+    if len(settings) == len(names):
+        return tuple(settings[name].strip() for name in names)
+
+    try:
+        lines = Path(".env").read_text(encoding="utf-8-sig").splitlines()
+    except FileNotFoundError:
+        lines = []
+    except (OSError, UnicodeError):
+        raise FitnessError("Cannot read .env. Check permissions and save it as UTF-8.") from None
+
+    for line in lines:
+        name, separator, value = line.partition("=")
+        name = name.strip()
+        if separator and name in names and name not in os.environ:
+            value = value.strip()
+            if len(value) >= 2 and value[0] in {"'", '"'} and value[-1] == value[0]:
+                value = value[1:-1]
+            settings[name] = value
+    return tuple(settings.get(name, "").strip() for name in names)
+
+
 def chat(path):
-    key = os.environ.get("OPENAI_API_KEY", "").strip()
-    model = os.environ.get("OPENAI_MODEL", "").strip()
+    key, model = chat_settings()
     if not key or not model:
-        raise FitnessError("Set OPENAI_API_KEY and OPENAI_MODEL to use chat.")
+        raise FitnessError("Set OPENAI_API_KEY and OPENAI_MODEL in the environment or .env to use chat.")
     try:
         import openai
     except ImportError:

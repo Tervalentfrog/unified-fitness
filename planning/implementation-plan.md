@@ -151,7 +151,8 @@ acceptance follows this slice.
   EOF or an explicit quit. No persisted transcript or cross-question memory.
 - Use the official Python SDK and Responses API in llm.py. Make the SDK an
   optional extra and load it only for chat. Read OPENAI_API_KEY and
-  OPENAI_MODEL from the environment. Require an explicitly configured model
+  OPENAI_MODEL from the environment, with a local .env fallback for chat.
+  Require an explicitly configured model
   that the account can use with function calling. Report missing setup
   locally before making requests. Imports and offline reports continue
   without an SDK, key, or network.

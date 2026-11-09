@@ -227,6 +227,7 @@ def test_chat_errors_and_disclosure(monkeypatch, capsys, tmp_path):
 
 
 def test_offline_without_sdk_or_credentials(fitness_path, monkeypatch, capsys):
+    monkeypatch.chdir(fitness_path.parent)
     monkeypatch.setitem(sys.modules, "openai", None)
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     monkeypatch.delenv("OPENAI_MODEL", raising=False)
@@ -240,3 +241,35 @@ def test_offline_without_sdk_or_credentials(fitness_path, monkeypatch, capsys):
     monkeypatch.setenv("OPENAI_MODEL", "invented-model")
     assert main([*args, "chat"]) == 1
     assert 'pip install -e ".[ai]"' in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("existing_model", [None, "process-model", ""])
+def test_chat_loads_dotenv_with_process_precedence(tmp_path, monkeypatch, capsys, existing_model):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("OPENAI_MODEL", raising=False)
+    if existing_model is not None:
+        monkeypatch.setenv("OPENAI_MODEL", existing_model)
+    (tmp_path / ".env").write_text(
+        '# Example\nOPENAI_API_KEY = "invented-key"\nOPENAI_MODEL=file-model\n'
+        'UNIFIED_FITNESS_DB=ignored.db\n', encoding="utf-8-sig",
+    )
+    client = FakeClient(response())
+
+    def create_client(**kwargs):
+        assert kwargs["api_key"] == "invented-key"
+        return client
+
+    monkeypatch.setitem(sys.modules, "openai", SimpleNamespace(
+        OpenAI=create_client, DefaultHttpxClient=lambda **_: None,
+    ))
+    questions = iter(["question", "/quit"])
+    monkeypatch.setattr("builtins.input", lambda _: next(questions))
+    if existing_model == "":
+        assert main(["chat"]) == 1
+        assert "Set OPENAI_API_KEY and OPENAI_MODEL" in capsys.readouterr().err
+        assert client.requests == []
+    else:
+        assert main(["chat"]) == 0
+        request, = client.requests
+        assert request["model"] == (existing_model or "file-model")

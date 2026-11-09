@@ -96,14 +96,19 @@ can read a v1 database as strength-only.
 
 ## Ask about weekly training
 
-Install the optional SDK and set `OPENAI_API_KEY` and `OPENAI_MODEL` in the
-process environment. Choose a Responses API model your account can use with
-function calling. The application does not load `.env` files.
+Install the optional SDK. Put `OPENAI_API_KEY` and `OPENAI_MODEL` in a local
+`.env` file in the directory where you launch chat. Use one UTF-8
+`NAME=value` line per setting. Existing process environment values take
+precedence, even when blank. Choose a Responses API model your account can
+use with function calling.
 
 ~~~powershell
 .\.venv\Scripts\python.exe -m pip install -e ".[ai]"
-.\.venv\Scripts\unified-fitness.exe --db data/fitness.sqlite3 chat
+.\.venv\Scripts\unified-fitness.exe chat
 ~~~
+
+Chat uses `data/unified-fitness.sqlite3` by default. Pass `--db` before
+`chat` to select another database. Reporting uses Asia/Singapore.
 
 Ask a self-contained question such as “How many runs and strength sets were
 recorded each week from 2024-01-01 through 2024-01-28?” Include both dates
