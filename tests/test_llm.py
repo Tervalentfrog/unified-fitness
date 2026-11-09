@@ -88,7 +88,8 @@ def test_evidence_matches_offline_cli(fitness_path, capsys):
         assert request["parallel_tool_calls"] is False
         assert request["model"] == "configured-model"
         assert request["max_output_tokens"] == 1024
-        tool, = request["tools"]
+        tool, running = request["tools"]
+        assert running["name"] == "get_running_trends"
         assert tool["name"] == "get_weekly_summary"
         assert tool["strict"] is True
         assert tool["parameters"]["required"] == ["start", "end"]

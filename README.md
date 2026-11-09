@@ -138,6 +138,37 @@ invented data. Installed CLI checks covered help, a synthetic weekly report,
 an invalid date range, and chat setup errors. Live SDK and model behavior
 remain unverified. See the [console verification](planning/implementation-plan.md#console-verification).
 
+## Compare running trends
+
+The default comparison uses the latest four completed Singapore calendar
+weeks and the preceding four. Choose an explicit historical range if recent
+history is sparse. A comparison with explicit dates uses the immediately
+preceding window of equal length.
+
+~~~powershell
+.\.venv\Scripts\unified-fitness.exe running-trends
+.\.venv\Scripts\unified-fitness.exe running-trends --mode comparison --from 2024-02-01 --to 2024-02-29
+.\.venv\Scripts\unified-fitness.exe running-trends --mode range --from 2024-01-01 --to 2024-02-29
+.\.venv\Scripts\unified-fitness.exe running-trends --mode year --year 2024
+.\.venv\Scripts\unified-fitness.exe running-trends --mode yearly
+.\.venv\Scripts\unified-fitness.exe running-trends --mode all_time
+~~~
+
+The report shows recorded runs, distinct running days, known distance and
+distance-weighted moving pace. Pace changes compare runs in the same distance
+band and require three eligible runs per band on each side. Lower seconds
+per kilometer means a faster recorded pace. Route, terrain, and effort
+remain unaccounted for.
+
+`range` shows weekly buckets, `year` shows monthly buckets, and `yearly`
+shows up to 12 calendar years ending at the latest recorded year. Partial
+periods are labelled. `all_time` includes older stored history even when
+the yearly view omits it.
+
+In chat, try “Is my running pace improving?”, “Show my running history by
+year”, or “What is my all-time running distance?” Chat can use one report
+per turn and displays its local evidence before model commentary.
+
 ## Local data and credentials
 
 Store private exports and databases under `data/`. Keep credentials, raw data,

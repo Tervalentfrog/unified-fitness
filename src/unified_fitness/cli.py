@@ -6,7 +6,7 @@ import sqlite3
 import sys
 from pathlib import Path
 
-from .analytics import running_summary, strength_summary, weekly_summary
+from .analytics import RUNNING_MODES, running_summary, running_trends, strength_summary, weekly_summary
 from .db import FitnessError
 from .ingestion import fitnotes, strava
 
@@ -24,6 +24,11 @@ def main(argv=None):
     strava_importer = commands.add_parser("import-strava", help="import runs from Strava activities.csv")
     strava_importer.add_argument("activities", type=Path)
     commands.add_parser("running-summary", help="report stored running totals and moving pace")
+    trends = commands.add_parser("running-trends", help="compare running periods or summarize running history")
+    trends.add_argument("--mode", choices=RUNNING_MODES, default="comparison")
+    trends.add_argument("--from", dest="start", help="inclusive YYYY-MM-DD start")
+    trends.add_argument("--to", dest="end", help="inclusive YYYY-MM-DD end")
+    trends.add_argument("--year", type=int, help="calendar year for year mode")
     weekly = commands.add_parser("weekly-summary", help="report Monday-start training weeks")
     weekly.add_argument("--from", dest="start", required=True, help="inclusive YYYY-MM-DD start")
     weekly.add_argument("--to", dest="end", required=True, help="inclusive YYYY-MM-DD end")
@@ -36,6 +41,10 @@ def main(argv=None):
             return 0
         if args.command == "running-summary":
             print(json.dumps(running_summary(args.db), indent=2, allow_nan=False))
+            return 0
+        if args.command == "running-trends":
+            report = running_trends(args.db, args.mode, args.start, args.end, args.year)
+            print(json.dumps(report, indent=2, allow_nan=False))
             return 0
         if args.command == "weekly-summary":
             print(json.dumps(weekly_summary(args.db, args.start, args.end), indent=2, allow_nan=False))

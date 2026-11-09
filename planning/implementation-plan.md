@@ -265,7 +265,7 @@ The Windows venv suite passed all 89 tests with
 The tests used a fake API client. Live model compatibility and reply quality
 remain unverified.
 
-## Next MVP slice: running trends
+## MVP slice: running trends
 
 See the [tool contracts and source assessment](training-trends-design.md).
 The approved slice covers running comparisons, date ranges, calendar years,
@@ -283,6 +283,16 @@ yearly breakdowns, and all-time totals.
    with controlled exports before scheduling weight-based analytics.
 
 The running slice fits the current SQLite v2 schema and dependencies.
+
+Implemented the offline `running-trends` command and the allowlisted
+`get_running_trends` chat tool. After review, the Windows venv suite passed
+112 tests with
+`.\.venv\Scripts\python.exe -m pytest -q --basetemp data/pytest-running-trends-review`.
+Installed CLI smoke checks for comparison, yearly, and all-time reports
+returned valid JSON and left the database hash unchanged. The Windows
+launcher emitted a Python path warning during those checks. Fake-client
+tests verified report parity and request limits. Live model selection and
+commentary quality remain unverified.
 
 ## Initialization verification
 

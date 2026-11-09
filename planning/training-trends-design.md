@@ -1,6 +1,6 @@
 # Training trends design
 
-The approved next slice is running trends, including yearly breakdowns
+The implemented running slice includes yearly breakdowns
 and all-time totals. Strength progression, running records, and start-time
 patterns are deferred. Their contracts below are proposals for later review.
 
@@ -75,7 +75,7 @@ Use the shared arguments. Return recorded run count, distinct running
 days, known distance in meters, moving pace in seconds per kilometer,
 and contributing run counts. Include matched distance-band comparisons
 when a comparison is requested. Use bands below 5 km, 5 to below 10 km,
-and 10 km or longer. These are proposed presentation bands for MVP review.
+and 10 km or longer.
 
 Reuse the existing pace calculation. Sum moving seconds and divide by
 the corresponding kilometers over runs with finite, positive distance

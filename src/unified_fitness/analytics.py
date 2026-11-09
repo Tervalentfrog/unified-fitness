@@ -1,10 +1,15 @@
 """Deterministic summaries of stored training records."""
 
 from contextlib import closing
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from math import isfinite
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from . import db
+
+REPORTING_ZONE = "Asia/Singapore"
+RUNNING_MODES = ("comparison", "range", "year", "yearly", "all_time")
+RUN_COLUMNS = "activity_date, distance_m, moving_time_s, elapsed_time_s, elevation_gain_m"
 
 
 def strength_summary(path):
@@ -38,29 +43,36 @@ def running_summary(path):
         connection.execute("BEGIN")
         version = db.check_schema(connection)
         rows = [] if version == 1 else connection.execute(
-            """SELECT activity_date, distance_m, moving_time_s, elapsed_time_s, elevation_gain_m
+            f"""SELECT {RUN_COLUMNS}
                FROM running_activities ORDER BY source, source_record_id"""
         ).fetchall()
 
     return summarize_runs(rows)
 
 
+def pace_metrics(rows):
+    eligible = [(distance, moving) for _, distance, moving, _, _ in rows
+                if distance and moving and distance > 0 and moving > 0
+                and isfinite(distance) and isfinite(moving)]
+    distance = sum(distance for distance, _ in eligible)
+    seconds = sum(moving for _, moving in eligible)
+    kilometers = distance / 1000
+    # Weight by distance. Tiny positive distances can round to zero in kilometers.
+    pace = seconds / kilometers if kilometers > 0 and isfinite(distance) and isfinite(seconds) else None
+    return {
+        "moving_pace_s_per_km": pace if pace is not None and pace > 0 and isfinite(pace) else None,
+        "runs_with_pace": len(eligible),
+        "pace_distance_m": distance if eligible and isfinite(distance) else None,
+    }
+
+
 def summarize_runs(rows):
-    pace_rows = [(distance, moving) for _, distance, moving, _, _ in rows
-                 if distance and moving]
-    pace = None
-    if pace_rows:
-        moving_total = sum(moving for _, moving in pace_rows)
-        kilometers = sum(distance for distance, _ in pace_rows) / 1000
-        # Tiny positive distances can round to zero in kilometers.
-        if kilometers > 0 and isfinite(kilometers) and isfinite(moving_total):
-            ratio = moving_total / kilometers
-            pace = ratio if isfinite(ratio) else None
+    pace = pace_metrics(rows)
+    del pace["pace_distance_m"]
     result = {
         "runs": len(rows),
         "recorded_running_days": len({row[0] for row in rows}),
-        "moving_pace_s_per_km": pace,
-        "runs_with_pace": len(pace_rows),
+        **pace,
     }
     for index, field in enumerate(("distance_m", "moving_time_s", "elapsed_time_s", "elevation_gain_m"), 1):
         known = [row[index] for row in rows if row[index] is not None]
@@ -93,6 +105,16 @@ def observed_bounds(rows):
     return {"first": rows[0][0], "last": rows[-1][0]} if rows else None
 
 
+def read_runs(connection, version, start, end):
+    if version == 1:
+        return []
+    return connection.execute(
+        f"""SELECT {RUN_COLUMNS} FROM running_activities WHERE activity_date BETWEEN ? AND ?
+            ORDER BY activity_date, source, source_record_id""",
+        (start.isoformat(), end.isoformat()),
+    ).fetchall()
+
+
 def weekly_summary(path, start, end):
     first, last = report_dates(start, end)
     with closing(db.connect(path, "ro")) as connection, connection:
@@ -103,12 +125,7 @@ def weekly_summary(path, start, end):
                WHERE performed_on BETWEEN ? AND ? ORDER BY performed_on, id""",
             (start, end),
         ).fetchall()
-        runs = [] if version == 1 else connection.execute(
-            """SELECT activity_date, distance_m, moving_time_s, elapsed_time_s, elevation_gain_m
-               FROM running_activities WHERE activity_date BETWEEN ? AND ?
-               ORDER BY activity_date, source, source_record_id""",
-            (start, end),
-        ).fetchall()
+        runs = read_runs(connection, version, first, last)
 
     first_week = monday(first)
     weeks = {
@@ -143,3 +160,152 @@ def weekly_summary(path, start, end):
         "observed_dates": {"strength": observed_bounds(sets), "running": observed_bounds(runs)},
         "weeks": summaries,
     }
+
+
+def reporting_today():
+    try:
+        return datetime.now(ZoneInfo(REPORTING_ZONE)).date()
+    except ZoneInfoNotFoundError:
+        raise db.FitnessError("Install Asia/Singapore timezone data to use calendar reports.") from None
+
+
+def running_window(mode, start, end, year, today):
+    if mode not in RUNNING_MODES or (start is None) != (end is None):
+        raise db.FitnessError("Choose a running report mode and supply both dates when using a range.")
+    if (year is not None) != (mode == "year") or (start is not None and mode not in ("range", "comparison")):
+        raise db.FitnessError("Use a year only in year mode and dates only in range or comparison mode.")
+    if mode == "year":
+        if type(year) is not int or not 1 <= year <= today.year:
+            raise db.FitnessError("Choose a valid calendar year no later than the current year.")
+        return date(year, 1, 1), min(date(year, 12, 31), today)
+    if mode in ("yearly", "all_time"):
+        return date.min, today
+    if start is not None:
+        if not isinstance(start, str) or not isinstance(end, str):
+            raise db.FitnessError("Dates must be YYYY-MM-DD strings.")
+        first, last = report_dates(start, end)
+    elif mode == "comparison":
+        first, last = monday(today) - timedelta(days=28), monday(today) - timedelta(days=1)
+    else:
+        raise db.FitnessError("Range mode requires start and end dates.")
+    if last > today:
+        raise db.FitnessError("The reporting range cannot end after today.")
+    return first, last
+
+
+def running_period(rows, start, end, label, *, partial=False):
+    known = [row[1] for row in rows if row[1] is not None and isfinite(row[1])]
+    distance = sum(known)
+    return {
+        "label": label, "start": start.isoformat(), "end": end.isoformat(), "partial": partial,
+        "runs": len(rows), "recorded_running_days": len({row[0] for row in rows}),
+        "distance_m": distance if known and isfinite(distance) else None,
+        "runs_with_distance_m": len(known),
+        **pace_metrics(rows),
+    }
+
+
+def runs_between(rows, start, end):
+    first, last = start.isoformat(), end.isoformat()
+    return [row for row in rows if first <= row[0] <= last]
+
+
+def running_comparison(baseline, current, baseline_rows, current_rows):
+    changes = {}
+    for metric in ("runs", "recorded_running_days", "distance_m"):
+        reason = None
+        if not baseline["runs"] or not current["runs"]:
+            reason = "empty_period"
+        elif metric == "distance_m" and any(
+            period[metric] is None or period["runs_with_distance_m"] != period["runs"]
+            for period in (baseline, current)
+        ):
+            reason = "incomplete_distance"
+        changes[metric] = {"delta": None if reason else current[metric] - baseline[metric], "reason": reason}
+
+    bands = []
+    directions = set()
+    for label, lower, upper in (("under_5_km", 0, 5000), ("5_to_under_10_km", 5000, 10000),
+                                ("10_km_or_more", 10000, float("inf"))):
+        before, after = (
+            pace_metrics(row for row in rows if row[1] is not None and lower <= row[1] < upper)
+            for rows in (baseline_rows, current_rows)
+        )
+        reason = None
+        delta = None
+        if min(before["runs_with_pace"], after["runs_with_pace"]) < 3:
+            reason = "insufficient_comparable_runs"
+        elif before["moving_pace_s_per_km"] is None or after["moving_pace_s_per_km"] is None:
+            reason = "unavailable_pace"
+        else:
+            delta = after["moving_pace_s_per_km"] - before["moving_pace_s_per_km"]
+            directions.add("faster" if delta < 0 else "slower" if delta > 0 else "unchanged")
+        bands.append({"band": label, "baseline": before, "current": after,
+                      "delta_s_per_km": delta, "reason": reason})
+    directional = directions - {"unchanged"}
+    trend = "mixed" if len(directional) > 1 else next(iter(directional or directions), "insufficient")
+    return {"changes": changes, "pace_bands": bands, "pace_direction": trend}
+
+
+def running_trends(path, mode="comparison", start=None, end=None, year=None, *, today=None):
+    today = today if today is not None else reporting_today()
+    try:
+        first, last = running_window(mode, start, end, year, today)
+        baseline_start = first - (last - first + timedelta(days=1)) if mode == "comparison" else first
+    except OverflowError:
+        raise db.FitnessError("The comparison extends beyond the supported calendar.") from None
+    with closing(db.connect(path, "ro")) as connection, connection:
+        connection.execute("BEGIN")
+        rows = read_runs(connection, db.check_schema(connection), baseline_start, last)
+
+    result = {
+        "status": "ok" if rows else "empty",
+        "reporting_timezone": REPORTING_ZONE,
+        "mode": mode,
+        "observed_dates": observed_bounds(rows),
+        "periods": [],
+        "comparison": None,
+        "limitations": ["recorded_data_only"],
+    }
+    periods = result["periods"]
+    if mode == "comparison":
+        baseline_end = first - timedelta(days=1)
+        before = runs_between(rows, baseline_start, baseline_end)
+        after = runs_between(rows, first, last)
+        periods.extend([running_period(before, baseline_start, baseline_end, "baseline"),
+                        running_period(after, first, last, "current")])
+        result["comparison"] = running_comparison(*periods, before, after)
+        if not before or not after:
+            result["limitations"].append("empty_comparison_period")
+    elif mode == "yearly":
+        if rows:
+            earliest, latest = int(rows[0][0][:4]), int(rows[-1][0][:4])
+            first_year = max(earliest, latest - 11)
+            if first_year > earliest:
+                result["limitations"].append("earlier_years_omitted")
+            for bucket_year in range(first_year, latest + 1):
+                low, full_end = date(bucket_year, 1, 1), date(bucket_year, 12, 31)
+                high = min(full_end, today)
+                periods.append(running_period(runs_between(rows, low, high), low, high,
+                                              str(bucket_year), partial=high < full_end))
+    else:
+        partial = mode == "year" and last < date(year, 12, 31)
+        total_start = first
+        if mode == "all_time":
+            total_start = date.fromisoformat(rows[0][0]) if rows else today
+        periods.append(running_period(rows, total_start, last, "total", partial=partial))
+        if mode == "range":
+            for offset in range(0, (last - monday(first)).days + 1, 7):
+                week = monday(first) + timedelta(days=offset)
+                low, high = max(first, week), week + timedelta(days=min(6, (last - week).days))
+                periods.append(running_period(runs_between(rows, low, high), low, high,
+                                              week.isoformat(), partial=low != week or (high - week).days < 6))
+        elif mode == "year":
+            for month in range(1, last.month + 1):
+                low = date(year, month, 1)
+                full_end = (date(year, month + 1, 1) - timedelta(days=1)
+                            if month < 12 else date(year, 12, 31))
+                high = min(full_end, last)
+                periods.append(running_period(runs_between(rows, low, high), low, high,
+                                              low.isoformat()[:7], partial=high < full_end))
+    return result
