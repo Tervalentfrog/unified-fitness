@@ -233,9 +233,10 @@ kind; volume is sum(load_kg * reps) only for records with known compatible exter
 loads. Do not interpret unknown load as bodyweight or mix assistance with lifted load.
 Estimated 1RM and causal conclusions are deferred.
 
-The proposed OpenAI Responses API integration uses strict JSON function schemas and
-an allowlist of analytical functions. The application validates dates, bounds, and
-exercise IDs and runs fixed parameterized queries over a read-only connection.
+The first OpenAI Responses API slice exposes only the combined weekly report
+through a strict function schema. The application validates dates and bounds
+locally. The database path comes from CLI configuration, and the report uses
+fixed parameterized queries over a read-only connection.
 There is no SQL, arbitrary file, shell, or write tool. Strict schemas constrain
 arguments; they do not establish correctness of answers. See the official
 [function-calling documentation](https://developers.openai.com/api/docs/guides/function-calling).
@@ -250,3 +251,5 @@ or free-text workout notes. Disclose remote processing when chat starts. Use
 `store=false` where supported, without promising zero provider retention; verify
 provider data handling when implementing chat. Do not persist chats by default.
 Tests use fake API responses; live API calls are explicit and optional.
+See the [one-tool console plan](implementation-plan.md#next-slice-one-tool-ai-console)
+for the request budget, aggregate validation, and acceptance tests.
