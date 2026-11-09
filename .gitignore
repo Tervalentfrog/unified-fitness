@@ -1,0 +1,48 @@
+# Python environments, caches, and build outputs
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+build/
+dist/
+*.egg-info/
+
+# Credentials and local configuration
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Personal data: retain only the directory's usage instructions
+/data/*
+!/data/README.md
+*.fitnotes
+*.sqlite
+*.sqlite3
+*.db
+*.sqlite*
+*.db-*
+*.csv
+*.tsv
+*.fit
+*.gpx
+*.tcx
+*.zip
+*.log
+
+# Only hand-authored synthetic fixtures belong in version control
+!tests/fixtures/**/*.csv
+!tests/fixtures/**/*.tsv
+
+# Editor / OS files
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
