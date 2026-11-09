@@ -20,9 +20,21 @@ Use Python 3.11 or newer. From the repository root in PowerShell:
 
 ```powershell
 py -m venv .venv
-.\.venv\Scripts\python.exe -m pip install -e ".[dev]"
+.\.venv\Scripts\python.exe -m pip install -e .
 .\.venv\Scripts\unified-fitness.exe --help
 ```
+
+Choose the install target that fits what you want to do:
+
+| Install target | What it includes |
+| --- | --- |
+| `.` | Imports and offline reports |
+| `".[ai]"` | The app and the OpenAI SDK for optional chat |
+| `".[dev]"` | The app and pytest for running tests |
+| `".[ai,dev]"` | The app, chat support, and pytest |
+
+If you already installed with `".[ai]"`, you can use the CLI and optional
+chat with that environment. Add the `dev` extra if you want to run the tests.
 
 On macOS/Linux, use `python3 -m venv .venv`, `.venv/bin/python` and
 `.venv/bin/unified-fitness`. Windows installs `tzdata` for Singapore reporting
