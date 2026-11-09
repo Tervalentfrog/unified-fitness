@@ -134,3 +134,8 @@ export) with a corresponding backup row; include mixed-unit/timed examples only
 when those capabilities are needed. Confirm the app version and check identity
 across an edit/reorder using a controlled test export. Do not change this original
 backup. Unknown mappings remain unknown until that evidence exists.
+
+Implementation handoff: [handoff.md](handoff.md) and the architecture's first-importer
+contract bound the next milestone. Reps-only ingestion can proceed while unit
+decoding and real cross-backup identity remain unverified; synthetic update tests
+must not be presented as proof of source ID stability.

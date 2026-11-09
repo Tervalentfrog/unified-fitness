@@ -15,7 +15,7 @@ No importer has been implemented, and Strava discovery has not started.
 | --- | --- | --- |
 | 0 | Planning and scaffold (this change) | Empty repository inspected; packaging, exclusions, documentation, and Git initialized; no app functionality |
 | 1 | Validate source contracts | Inspect actual FitNotes backup read-only; inspect Strava CSV if available; document tables/keys, units, dates, supported records and identity policy; hand-author synthetic fixture specification |
-| 2 | First offline vertical slice: FitNotes | Minimal schema with accepted source metadata + adapter + CLI import + per-exercise set/repetition totals and recorded training days; repeated import unchanged; edited source record updates once after ID stability validation; real backup remains unchanged |
+| 2 | First offline vertical slice: FitNotes | Three tables (`imports`, `exercises`, `strength_sets`) + adapter + CLI import + set/repetition/day summary; repeat imports leave domain rows unchanged; synthetic same-ID updates tested with real cross-backup stability explicitly unverified; source backup unchanged |
 | 3 | Add Strava running | CSV adapter + running summary; validated units/dates and moving vs elapsed time; duplicate and overlapping export imports stable |
 | 4 | Shared deterministic analytics | Weekly training days across sources, running trends and strength progression; explicit coverage, missing-data behavior, and reproducible calculations |
 | 5 | Interactive AI console | OpenAI SDK + strict tool schemas + bounded loop; answers backed by metrics; offline commands work without a key; API and tool failures handled |
@@ -57,10 +57,12 @@ after validating that source. Do not invent a FitNotes schema to keep coding.
 
 The discovery findings and source metadata fields are accepted. `py` now runs
 Python 3.14.10 successfully for read-only discovery; package installation remains
-unverified. Validate installation and define synthetic fixtures for the agreed
-reps-focused slice before writing importer code. Validate ID stability before
-supporting cross-backup updates; weight encoding need not block reps-only reports,
-but must be established before adding normalized-load analytics.
+unverified. Implement the bounded milestone specified in [handoff.md](handoff.md),
+starting with installation and synthetic fixtures. Test same-ID updates under an
+explicit stable-ID assumption; do not claim real cross-backup stability until it
+is observed. Weight encoding need not block reps-only reports, but must be established
+before adding normalized-load analytics. [next-session-prompt.md](next-session-prompt.md)
+contains the ready-to-paste implementation request.
 
 Needed before the relevant milestone: a FitNotes backup, a Strava personal export
 CSV, resolution of source timezone/unit ambiguities, and later an API key plus

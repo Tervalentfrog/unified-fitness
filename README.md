@@ -3,7 +3,7 @@
 A local-first, single-user application for importing FitNotes strength history and
 Strava running history into SQLite, then querying measured trends from a console.
 
-**Status: planning and initialization only.** No importer, database schema, CLI,
+**Status: planning, initialization, and FitNotes discovery complete.** No importer, database schema, CLI,
 analytics, or OpenAI integration has been implemented. There is no runnable
 application command yet, and no application tests have been added.
 
@@ -12,8 +12,8 @@ application command yet, and no application tests have been added.
 Use Python 3.11 or newer with pip and venv. From the repository root in PowerShell:
 
 ```powershell
-python --version
-python -m venv .venv
+py --version
+py -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -e ".[dev]"
 .\.venv\Scripts\python.exe -c "import unified_fitness"
 ```
@@ -21,10 +21,10 @@ python -m venv .venv
 On macOS/Linux, use `python3` to create the environment and
 `.venv/bin/python` for the remaining commands. Activating the environment is optional.
 
-Initialization environment (2026-11-09): `python` resolved to an unusable Windows
-App Execution Alias, and `py` was unavailable. Install or select a working Python
-interpreter before running setup. Package installation and Python execution have
-not been validated on this machine.
+Discovery environment (2026-11-09): `py` runs Python 3.14.10 and SQLite queries
+successfully, with a path-location warning. `python` still resolves to an unusable
+Windows App Execution Alias. Virtual-environment setup and package installation
+have not been validated on this machine.
 
 When the first feature tests exist, run:
 
@@ -68,6 +68,9 @@ README.md                 Setup and project status
 - [Architecture and proposed data model](planning/architecture.md)
 - [Prioritized implementation plan](planning/implementation-plan.md)
 - [Decisions, trade-offs, and open questions](planning/decisions.md)
+- [FitNotes discovery](planning/fitnotes-discovery.md)
+- [Implementation handoff](planning/handoff.md)
+- [Ready-to-paste next-session prompt](planning/next-session-prompt.md)
 
-Next: review the plan, inspect an actual FitNotes backup read-only, and validate
-its schema, record identity, units, and dates before implementing an importer.
+Next: implement the bounded FitNotes import/summary workflow described in the
+handoff. Normalize IDs/dates/reps; keep load conversions unknown until validated.

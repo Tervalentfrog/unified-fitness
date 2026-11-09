@@ -70,6 +70,37 @@ Leave `source_load_unit`, `load_kg`, `load_kind`, and `set_order` NULL until the
 meaning is established. Store source schema version, relevant settings, and the
 explicit completion policy in the existing import `options_json`; no extra table.
 
+### First importer contract
+
+Implement only `imports`, `exercises`, and `strength_sets` now; add the running
+table with Strava. Support the inspected SQLite `user_version=22` and validate
+required tables/columns and actual stored values; do not copy all source tables.
+Source and destination must be different files, including aliases/hard links.
+Reject an incompatible source or destination schema before changing stored data.
+
+Initially accept valid type-code `0` set records with zero distance/duration.
+Other types or nonzero distance/duration are explicitly unsupported, not silently
+truncated. Preserve finite nonnegative raw load without conversion, including
+nonzero values; normalization means canonical source-ID text, valid ISO calendar
+dates, and nonnegative integer reps. Unverified physical units remain NULL with a
+clear warning. This scope does not validate the meaning of other exercise types.
+
+Require an explicit import option such as `--assume-performed` to assert the file
+contains performed sets, and record it in import metadata. The user has already
+confirmed this for the inspected backup; no new confirmation is needed for that
+file. Do not hardcode its filename, contents, or IDs into the importer.
+
+Implement same-ID upserts and test them on synthetic snapshots under a stable-ID
+assumption. That verifies our code, not FitNotes behavior across edits/reorders or
+restores. Keep the latter limitation explicit until controlled source comparisons
+are available; it need not block same-file idempotence or reps-only reporting.
+
+Import outcome counts refer to source set rows, not exercise definitions:
+inserted + updated + unchanged + rejected + unsupported = rows examined.
+Warnings may overlap these categories. A repeated identical import leaves exercise
+and set rows, including their last-change provenance, unchanged; it may append
+one committed `imports` audit row. No deletion reconciliation or file-hash skipping.
+
 ```mermaid
 erDiagram
     IMPORTS ||--o{ RUNNING_ACTIVITIES : "last imported"

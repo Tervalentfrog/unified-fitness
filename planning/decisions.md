@@ -17,6 +17,10 @@ and accepted model adjustments. Those decisions are not implemented.
 | Preserve source codes and flags | Keep exercise type/unit codes and set unit/completion/pending flags alongside raw load; keep schema/settings/completion policy in existing import metadata. Import only referenced exercise definitions. |
 | Completion policy scoped to the inspected backup | Its sets were confirmed performed, so neither raw flag filters them out. Future backups need a documented policy; the current app setting cannot establish historical completion. |
 | Leave unverified values unset | Normalized load/unit, load kind, and set order remain NULL. No extra sessions table or timed/distance-based FitNotes support until justified by validated examples. |
+| Three tables for the first slice | Create import audit, referenced exercises, and sets now; add running activities with Strava. No unused feature tables. |
+| Explicit performed-set assertion | Require an import option and record it. Confirmation already exists for the inspected backup; do not assume future files are all performed or embed private IDs in code. |
+| Bounded source support and normalization | Validate source version 22; accept type 0 with zero distance/duration, preserve raw load/codes, normalize IDs/dates/reps, and leave physical conversions unknown. Report other records as unsupported. |
+| Idempotence applies to domain rows | Repeat imports do not mutate exercises/sets or their last-change provenance. A new audit entry records each committed attempt; counters count source set rows only. |
 | Upsert by source identity; retain absent records | Handles repeats and corrections without accidental deletes. Imports are not full synchronization; older exports can overwrite newer values. |
 | Preserve valid data on incomplete or malformed updates | Absent optional columns preserve stored values; malformed optional updates reject the record. Only source-defined explicit empties clear a field. |
 | Singapore reporting dates and Monday-start weeks (confirmed) | One timezone per database avoids mixing differently calculated dates. A timezone change requires an explicit rebuild/reimport for the MVP. Date-only history stays date-only. |
@@ -50,11 +54,15 @@ and accepted model adjustments. Those decisions are not implemented.
    unambiguous distance/duration fields, and sufficient timestamp information?
 3. How should older naive timestamps and travel be interpreted? Reporting dates are
    confirmed as Singapore dates with Monday-start weeks; source timezones are separate.
+
 The first FitNotes report scope is settled: per-exercise set/repetition totals and
 recorded training days. Load-based progression and volume wait for source validation.
 
 These questions gate the relevant implementation, not project initialization.
 Model choice and API spend limits can wait until deterministic analytics work.
+For the next milestone, synthetic same-ID update tests establish our upsert behavior
+only; real FitNotes ID stability remains an explicit limitation. Unknown load units
+and source app version do not block the inspected schema's reps-only import path.
 
 ## Deferred scope
 
