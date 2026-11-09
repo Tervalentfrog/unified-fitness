@@ -169,6 +169,25 @@ In chat, try “Is my running pace improving?”, “Show my running history by
 year”, or “What is my all-time running distance?” Chat can use one report
 per turn and displays its local evidence before model commentary.
 
+## Review strength activity
+
+Use the full exercise name shown by `summary`. Names match case-insensitively
+after trimming whitespace. If more than one stored exercise has that name,
+the report returns an ambiguity status. Omit `--exercise` for overall totals.
+
+~~~powershell
+.\.venv\Scripts\unified-fitness.exe summary
+.\.venv\Scripts\unified-fitness.exe strength-activity --mode all_time --exercise "Your exercise name"
+.\.venv\Scripts\unified-fitness.exe strength-activity --mode year --year 2024
+~~~
+
+Strength activity uses the same period modes as running trends. It reports
+sets, known repetitions, and distinct recorded training dates. Reps are a
+subtotal when coverage is incomplete. In chat, try “How many sets of
+Barbell Bench Press did I record in 2024?” using the name in your own
+summary. These counts describe recorded activity. Load, weight-based volume,
+and estimated 1RM remain unavailable.
+
 ## Local data and credentials
 
 Store private exports and databases under `data/`. Keep credentials, raw data,

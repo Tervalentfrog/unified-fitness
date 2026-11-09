@@ -294,6 +294,25 @@ launcher emitted a Python path warning during those checks. Fake-client
 tests verified report parity and request limits. Live model selection and
 commentary quality remain unverified.
 
+## MVP slice: exercise-level strength activity
+
+Implemented the offline `strength-activity` report and the allowlisted
+`get_strength_progress` tool. They reuse the period rules from running
+trends and report sets, known reps, and distinct recorded training days.
+Exercise matching is exact after trimming and case folding. Unknown or
+ambiguous names return a status without merging rows. Incomplete repetition
+coverage suppresses the repetition delta.
+
+After review, the Windows venv suite passed 123 tests with
+`.\.venv\Scripts\python.exe -m pytest -q --basetemp data/pytest-strength-review`.
+An installed CLI check matched exercise set totals to the existing strength
+summary and confirmed the database hash was unchanged. The launcher emitted
+the existing Python path warning. Chat tests used a fake client. Live model
+routing remains unverified.
+
+Load-based strength progression and running records remain deferred.
+No schema migration or new dependency was needed.
+
 ## Initialization verification
 
 No existing files, Git metadata, or applicable parent `AGENTS.md` were found.

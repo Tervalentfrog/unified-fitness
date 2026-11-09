@@ -1,8 +1,8 @@
 # Training trends design
 
-The implemented running slice includes yearly breakdowns
-and all-time totals. Strength progression, running records, and start-time
-patterns are deferred. Their contracts below are proposals for later review.
+Running trends and strength activity support yearly breakdowns and all-time
+totals. Load-based progression, running records, and start-time patterns
+remain deferred.
 
 ## Source evidence
 
@@ -101,9 +101,9 @@ Supports weekly distance and frequency, year-by-year running history,
 all-time totals, and questions about whether recorded pace changed over
 comparable distances.
 
-## Deferred proposal: get_strength_progress
+## get_strength_progress
 
-Add `exercise` (string or null) to the shared schema. Use null for overall
+The tool adds `exercise` (string or null) to the shared schema. Use null for overall
 recorded strength activity. For a named exercise, trim whitespace and
 match the full name case-insensitively using Python case folding. Match
 against local exercise definitions, then filter by the single resolved

@@ -8,7 +8,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from . import db
 
 REPORTING_ZONE = "Asia/Singapore"
-RUNNING_MODES = ("comparison", "range", "year", "yearly", "all_time")
+PERIOD_MODES = ("comparison", "range", "year", "yearly", "all_time")
 RUN_COLUMNS = "activity_date, distance_m, moving_time_s, elapsed_time_s, elevation_gain_m"
 
 
@@ -141,16 +141,10 @@ def weekly_summary(path, start, end):
     for week, (week_sets, week_runs) in weeks.items():
         strength_days = {day for day, _ in week_sets}
         running_days = {row[0] for row in week_runs}
-        repetitions = [reps for _, reps in week_sets if reps is not None]
         summaries.append({
             "week_start": week.isoformat(),
             "recorded_training_days": len(strength_days | running_days),
-            "strength": {
-                "recorded_strength_days": len(strength_days),
-                "sets": len(week_sets),
-                "repetitions": sum(repetitions) if repetitions else None,
-                "sets_with_repetitions": len(repetitions),
-            },
+            "strength": strength_metrics(week_sets),
             "running": summarize_runs(week_runs),
         })
     return {
@@ -169,9 +163,9 @@ def reporting_today():
         raise db.FitnessError("Install Asia/Singapore timezone data to use calendar reports.") from None
 
 
-def running_window(mode, start, end, year, today):
-    if mode not in RUNNING_MODES or (start is None) != (end is None):
-        raise db.FitnessError("Choose a running report mode and supply both dates when using a range.")
+def report_window(mode, start, end, year, today):
+    if mode not in PERIOD_MODES or (start is None) != (end is None):
+        raise db.FitnessError("Choose a report mode and supply both dates when using a range.")
     if (year is not None) != (mode == "year") or (start is not None and mode not in ("range", "comparison")):
         raise db.FitnessError("Use a year only in year mode and dates only in range or comparison mode.")
     if mode == "year":
@@ -193,11 +187,10 @@ def running_window(mode, start, end, year, today):
     return first, last
 
 
-def running_period(rows, start, end, label, *, partial=False):
+def running_metrics(rows):
     known = [row[1] for row in rows if row[1] is not None and isfinite(row[1])]
     distance = sum(known)
     return {
-        "label": label, "start": start.isoformat(), "end": end.isoformat(), "partial": partial,
         "runs": len(rows), "recorded_running_days": len({row[0] for row in rows}),
         "distance_m": distance if known and isfinite(distance) else None,
         "runs_with_distance_m": len(known),
@@ -205,7 +198,7 @@ def running_period(rows, start, end, label, *, partial=False):
     }
 
 
-def runs_between(rows, start, end):
+def rows_between(rows, start, end):
     first, last = start.isoformat(), end.isoformat()
     return [row for row in rows if first <= row[0] <= last]
 
@@ -249,17 +242,39 @@ def running_comparison(baseline, current, baseline_rows, current_rows):
 
 def running_trends(path, mode="comparison", start=None, end=None, year=None, *, today=None):
     today = today if today is not None else reporting_today()
-    try:
-        first, last = running_window(mode, start, end, year, today)
-        baseline_start = first - (last - first + timedelta(days=1)) if mode == "comparison" else first
-    except OverflowError:
-        raise db.FitnessError("The comparison extends beyond the supported calendar.") from None
+    baseline_start, first, last = report_bounds(mode, start, end, year, today)
     with closing(db.connect(path, "ro")) as connection, connection:
         connection.execute("BEGIN")
         rows = read_runs(connection, db.check_schema(connection), baseline_start, last)
 
+    result = period_report(rows, mode, baseline_start, first, last, today, running_metrics)
+    if mode == "comparison":
+        before, after = result["periods"]
+        result["comparison"] = running_comparison(
+            before, after, rows_between(rows, baseline_start, first - timedelta(days=1)),
+            rows_between(rows, first, last),
+        )
+    return result
+
+
+def report_bounds(mode, start, end, year, today):
+    try:
+        first, last = report_window(mode, start, end, year, today)
+        baseline_start = first - (last - first + timedelta(days=1)) if mode == "comparison" else first
+    except OverflowError:
+        raise db.FitnessError("The comparison extends beyond the supported calendar.") from None
+    return baseline_start, first, last
+
+
+def period_report(rows, mode, baseline_start, first, last, today, metrics, *, status=None):
+    def period(start, end, label, *, partial=False):
+        return {
+            "label": label, "start": start.isoformat(), "end": end.isoformat(), "partial": partial,
+            **metrics(rows_between(rows, start, end)),
+        }
+
     result = {
-        "status": "ok" if rows else "empty",
+        "status": status or ("ok" if rows else "empty"),
         "reporting_timezone": REPORTING_ZONE,
         "mode": mode,
         "observed_dates": observed_bounds(rows),
@@ -267,15 +282,14 @@ def running_trends(path, mode="comparison", start=None, end=None, year=None, *, 
         "comparison": None,
         "limitations": ["recorded_data_only"],
     }
+    if status is not None:
+        return result
     periods = result["periods"]
     if mode == "comparison":
         baseline_end = first - timedelta(days=1)
-        before = runs_between(rows, baseline_start, baseline_end)
-        after = runs_between(rows, first, last)
-        periods.extend([running_period(before, baseline_start, baseline_end, "baseline"),
-                        running_period(after, first, last, "current")])
-        result["comparison"] = running_comparison(*periods, before, after)
-        if not before or not after:
+        periods.extend([period(baseline_start, baseline_end, "baseline"), period(first, last, "current")])
+        bounds = result["observed_dates"]
+        if not bounds or bounds["first"] >= first.isoformat() or bounds["last"] < first.isoformat():
             result["limitations"].append("empty_comparison_period")
     elif mode == "yearly":
         if rows:
@@ -286,26 +300,75 @@ def running_trends(path, mode="comparison", start=None, end=None, year=None, *, 
             for bucket_year in range(first_year, latest + 1):
                 low, full_end = date(bucket_year, 1, 1), date(bucket_year, 12, 31)
                 high = min(full_end, today)
-                periods.append(running_period(runs_between(rows, low, high), low, high,
-                                              str(bucket_year), partial=high < full_end))
+                periods.append(period(low, high, str(bucket_year), partial=high < full_end))
     else:
-        partial = mode == "year" and last < date(year, 12, 31)
+        partial = mode == "year" and last < date(first.year, 12, 31)
         total_start = first
         if mode == "all_time":
             total_start = date.fromisoformat(rows[0][0]) if rows else today
-        periods.append(running_period(rows, total_start, last, "total", partial=partial))
+        periods.append(period(total_start, last, "total", partial=partial))
         if mode == "range":
             for offset in range(0, (last - monday(first)).days + 1, 7):
                 week = monday(first) + timedelta(days=offset)
                 low, high = max(first, week), week + timedelta(days=min(6, (last - week).days))
-                periods.append(running_period(runs_between(rows, low, high), low, high,
-                                              week.isoformat(), partial=low != week or (high - week).days < 6))
+                periods.append(period(low, high, week.isoformat(), partial=low != week or (high - week).days < 6))
         elif mode == "year":
+            year = first.year
             for month in range(1, last.month + 1):
                 low = date(year, month, 1)
                 full_end = (date(year, month + 1, 1) - timedelta(days=1)
                             if month < 12 else date(year, 12, 31))
                 high = min(full_end, last)
-                periods.append(running_period(runs_between(rows, low, high), low, high,
-                                              low.isoformat()[:7], partial=high < full_end))
+                periods.append(period(low, high, low.isoformat()[:7], partial=high < full_end))
+    return result
+
+
+def strength_metrics(rows):
+    repetitions = [reps for _, reps in rows if reps is not None]
+    return {
+        "sets": len(rows),
+        "repetitions": sum(repetitions) if repetitions else None,
+        "sets_with_repetitions": len(repetitions),
+        "recorded_strength_days": len({day for day, _ in rows}),
+    }
+
+
+def strength_activity(path, mode="comparison", start=None, end=None, year=None, exercise=None, *, today=None):
+    if exercise is not None and (not isinstance(exercise, str) or not exercise.strip() or len(exercise) > 200):
+        raise db.FitnessError("Supply a nonempty exercise name of at most 200 characters.")
+    today = today if today is not None else reporting_today()
+    baseline_start, first, last = report_bounds(mode, start, end, year, today)
+    status = None
+    with closing(db.connect(path, "ro")) as connection, connection:
+        connection.execute("BEGIN")
+        db.check_schema(connection)
+        sql = "SELECT performed_on, repetitions FROM strength_sets WHERE performed_on BETWEEN ? AND ?"
+        parameters = (baseline_start.isoformat(), last.isoformat())
+        if exercise is not None:
+            exercise = exercise.strip()
+            matches = [exercise_id for exercise_id, name in connection.execute("SELECT id, name FROM exercises")
+                       if name.strip().casefold() == exercise.casefold()]
+            if len(matches) != 1:
+                status = "exercise_ambiguous" if matches else "exercise_not_found"
+            else:
+                sql += " AND exercise_id = ?"
+                parameters += (matches[0],)
+        rows = [] if status else connection.execute(sql + " ORDER BY performed_on, id", parameters).fetchall()
+
+    result = period_report(rows, mode, baseline_start, first, last, today, strength_metrics, status=status)
+    result["exercise"] = exercise
+    result["limitations"].append("load_metrics_unavailable")
+    if status is None and mode == "comparison":
+        baseline, current = result["periods"]
+        changes = {}
+        for metric in ("sets", "repetitions", "recorded_strength_days"):
+            reason = None
+            if not baseline["sets"] or not current["sets"]:
+                reason = "empty_period"
+            elif metric == "repetitions" and any(
+                period["sets_with_repetitions"] != period["sets"] for period in (baseline, current)
+            ):
+                reason = "incomplete_repetitions"
+            changes[metric] = {"delta": None if reason else current[metric] - baseline[metric], "reason": reason}
+        result["comparison"] = {"changes": changes}
     return result

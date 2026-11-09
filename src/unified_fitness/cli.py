@@ -6,7 +6,9 @@ import sqlite3
 import sys
 from pathlib import Path
 
-from .analytics import RUNNING_MODES, running_summary, running_trends, strength_summary, weekly_summary
+from .analytics import (
+    PERIOD_MODES, running_summary, running_trends, strength_activity, strength_summary, weekly_summary,
+)
 from .db import FitnessError
 from .ingestion import fitnotes, strava
 
@@ -25,10 +27,13 @@ def main(argv=None):
     strava_importer.add_argument("activities", type=Path)
     commands.add_parser("running-summary", help="report stored running totals and moving pace")
     trends = commands.add_parser("running-trends", help="compare running periods or summarize running history")
-    trends.add_argument("--mode", choices=RUNNING_MODES, default="comparison")
-    trends.add_argument("--from", dest="start", help="inclusive YYYY-MM-DD start")
-    trends.add_argument("--to", dest="end", help="inclusive YYYY-MM-DD end")
-    trends.add_argument("--year", type=int, help="calendar year for year mode")
+    strength = commands.add_parser("strength-activity", help="report strength sets, reps, and recorded days")
+    for report_parser in (trends, strength):
+        report_parser.add_argument("--mode", choices=PERIOD_MODES, default="comparison")
+        report_parser.add_argument("--from", dest="start", help="inclusive YYYY-MM-DD start")
+        report_parser.add_argument("--to", dest="end", help="inclusive YYYY-MM-DD end")
+        report_parser.add_argument("--year", type=int, help="calendar year for year mode")
+    strength.add_argument("--exercise", help="full exercise name, matched case-insensitively")
     weekly = commands.add_parser("weekly-summary", help="report Monday-start training weeks")
     weekly.add_argument("--from", dest="start", required=True, help="inclusive YYYY-MM-DD start")
     weekly.add_argument("--to", dest="end", required=True, help="inclusive YYYY-MM-DD end")
@@ -44,6 +49,10 @@ def main(argv=None):
             return 0
         if args.command == "running-trends":
             report = running_trends(args.db, args.mode, args.start, args.end, args.year)
+            print(json.dumps(report, indent=2, allow_nan=False))
+            return 0
+        if args.command == "strength-activity":
+            report = strength_activity(args.db, args.mode, args.start, args.end, args.year, args.exercise)
             print(json.dumps(report, indent=2, allow_nan=False))
             return 0
         if args.command == "weekly-summary":

@@ -9,7 +9,8 @@ from pathlib import Path
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from .analytics import (
-    RUNNING_MODES, monday, report_dates, reporting_today, running_trends, running_window, weekly_summary,
+    PERIOD_MODES, monday, report_bounds, report_dates, reporting_today, running_trends, strength_activity,
+    weekly_summary,
 )
 from .db import FitnessError
 
@@ -30,6 +31,12 @@ TOOL = {
         "additionalProperties": False,
     },
 }
+PERIOD_PROPERTIES = {
+    "mode": {"type": "string", "enum": list(PERIOD_MODES)},
+    "start": {"type": ["string", "null"], "description": "Inclusive ISO start for range or comparison."},
+    "end": {"type": ["string", "null"], "description": "Inclusive ISO end for range or comparison."},
+    "year": {"type": ["integer", "null"], "description": "Calendar year for year mode only."},
+}
 RUNNING_TOOL = {
     "type": "function",
     "name": "get_running_trends",
@@ -42,13 +49,24 @@ RUNNING_TOOL = {
     "strict": True,
     "parameters": {
         "type": "object",
-        "properties": {
-            "mode": {"type": "string", "enum": list(RUNNING_MODES)},
-            "start": {"type": ["string", "null"], "description": "Inclusive ISO start for range or comparison."},
-            "end": {"type": ["string", "null"], "description": "Inclusive ISO end for range or comparison."},
-            "year": {"type": ["integer", "null"], "description": "Calendar year for year mode only."},
-        },
-        "required": ["mode", "start", "end", "year"],
+        "properties": PERIOD_PROPERTIES,
+        "required": list(PERIOD_PROPERTIES),
+        "additionalProperties": False,
+    },
+}
+STRENGTH_TOOL = {
+    "type": "function",
+    "name": "get_strength_progress",
+    "description": (
+        "Read recorded strength sets, known repetitions, and distinct training dates, optionally "
+        "for one exact exercise name from the question. Use null exercise only for overall strength. "
+        "Supports comparison, range, year, yearly, and all_time. No load, volume by weight, or estimated 1RM."
+    ),
+    "strict": True,
+    "parameters": {
+        "type": "object",
+        "properties": {**PERIOD_PROPERTIES, "exercise": {"type": ["string", "null"]}},
+        "required": [*PERIOD_PROPERTIES, "exercise"],
         "additionalProperties": False,
     },
 }
@@ -56,9 +74,11 @@ INSTRUCTIONS = (
     "Answer general questions directly. Never make claims about the user's recorded training "
     "without tool evidence. If the question needs a date range and it is unclear, "
     "ask one focused clarification; do not guess dates. Use locally resolved dates when supplied, "
-    "otherwise require both dates in YYYY-MM-DD form for explicit ranges. Running trends can use "
+    "otherwise require both dates in YYYY-MM-DD form for explicit ranges. Running and strength reports can use "
     "an explicitly requested year, yearly or all-time scope, or the default comparison for change questions. "
     "In running comparisons use pace_direction and eligible distance bands; overall pace is descriptive. "
+    "For exercise-specific strength questions use the exact exercise wording from the user. "
+    "Strength sets, reps and recorded days do not establish strength gains or load-based volume. "
     "Never infer inactivity or improvement from empty periods or infer causal effects. "
     "If the available tool cannot answer the question, explain the specific limitation. "
     "Use only the supplied evidence for claims about recorded training. Explain relevant missing "
@@ -100,7 +120,7 @@ def request(client, model, items, *, allow_tool, resolved=None):
     if resolved:
         instructions += f" The locally resolved reporting range is {resolved[0]} through {resolved[1]}."
     response = client.responses.create(
-        model=model, input=items, instructions=instructions, tools=[TOOL, RUNNING_TOOL],
+        model=model, input=items, instructions=instructions, tools=[TOOL, RUNNING_TOOL, STRENGTH_TOOL],
         tool_choice="auto" if allow_tool else "none", parallel_tool_calls=False,
         max_output_tokens=1024, store=False, include=["reasoning.encrypted_content"], **options,
     )
@@ -134,20 +154,21 @@ def tool_dates(arguments):
     return start, end
 
 
-def running_arguments(arguments, today):
+def period_arguments(arguments, today, *, strength):
     try:
-        if not isinstance(arguments, str) or len(arguments) > 256:
+        if not isinstance(arguments, str) or len(arguments) > (2048 if strength else 256):
             raise ValueError
         fields = json.loads(arguments, object_pairs_hook=unique_fields)
-        if not isinstance(fields, dict) or fields.keys() != {"mode", "start", "end", "year"}:
+        expected = set(PERIOD_PROPERTIES) | ({"exercise"} if strength else set())
+        if not isinstance(fields, dict) or fields.keys() != expected:
             raise ValueError
     except ValueError:
-        raise FitnessError("OpenAI requested invalid running trend arguments.") from None
-    running_window(**fields, today=today)
+        raise FitnessError("OpenAI requested invalid report arguments.") from None
+    report_bounds(**{name: fields[name] for name in PERIOD_PROPERTIES}, today=today)
     return fields
 
 
-def running_scope_matches(fields, question):
+def period_scope_matches(fields, question):
     mode = fields["mode"]
     explicit_dates = re.findall(ISO_DATE, question)
     years = re.findall(r"\b\d{4}\b", re.sub(ISO_DATE, "", question))
@@ -231,12 +252,14 @@ def answer(client, model, path, question, *, pending=None):
     if len(calls) != 1:
         raise FitnessError("OpenAI requested more than one tool call.")
     call = calls[0]
-    if call.name not in (TOOL["name"], RUNNING_TOOL["name"]) or not call.call_id:
+    if call.name not in (TOOL["name"], RUNNING_TOOL["name"], STRENGTH_TOOL["name"]) or not call.call_id:
         raise FitnessError("OpenAI requested an invalid tool call.")
     is_running = call.name == RUNNING_TOOL["name"]
-    if is_running:
+    is_strength = call.name == STRENGTH_TOOL["name"]
+    uses_periods = is_running or is_strength
+    if uses_periods:
         today = today if has_relative_period else reporting_today()
-        fields = running_arguments(call.arguments, today)
+        fields = period_arguments(call.arguments, today, strength=is_strength)
         start, end = fields["start"], fields["end"]
     else:
         start, end = tool_dates(call.arguments)
@@ -245,17 +268,27 @@ def answer(client, model, path, question, *, pending=None):
         return pending or question
     if resolved and (start, end) != resolved:
         raise FitnessError("OpenAI requested dates outside the resolved reporting range. Try explicit dates.")
-    if is_running and not running_scope_matches(fields, question):
-        raise FitnessError("The running report scope did not match the question. Try specifying the period.")
-    if resolved is None and (not is_running or start is not None or re.search(ISO_DATE, question)):
+    if uses_periods and not period_scope_matches(fields, question):
+        raise FitnessError("The report scope did not match the question. Try specifying the period.")
+    if resolved is None and (not uses_periods or start is not None or re.search(ISO_DATE, question)):
         supplied_dates = tuple(re.findall(ISO_DATE, question))
         same_day = start == end and supplied_dates == (start,)
         if supplied_dates != (start, end) and not same_day:
             print("Which date range should I use? Give both dates as YYYY-MM-DD.")
             return pending or question
-    report_name = "running trends" if is_running else "weekly"
+    report_name = "running trends" if is_running else "strength activity" if is_strength else "weekly"
+    if is_strength and fields["exercise"] is not None:
+        exercise = fields["exercise"]
+        user_text = " ".join(item["content"] for item in items).casefold()
+        if (not isinstance(exercise, str) or not exercise.strip() or len(exercise) > 200
+                or not re.search(rf"(?<!\w){re.escape(exercise.strip().casefold())}(?!\w)", user_text)):
+            raise FitnessError("Use the full exercise name from your question.")
     try:
-        report = running_trends(path, **fields, today=today) if is_running else weekly_summary(path, start, end)
+        if uses_periods:
+            calculate = strength_activity if is_strength else running_trends
+            report = calculate(path, **fields, today=today)
+        else:
+            report = weekly_summary(path, start, end)
     except (FitnessError, sqlite3.Error, OSError, RuntimeError, ValueError):
         raise FitnessError(f"Cannot read the {report_name} report. Check the local database and schema.") from None
     try:
@@ -267,7 +300,13 @@ def answer(client, model, path, question, *, pending=None):
 
     print("Deterministic evidence")
     print(json.dumps(report, indent=2, allow_nan=False))
-    empty = report["status"] == "empty" if is_running else all(
+    if is_strength and report["status"] == "exercise_not_found":
+        print("No exercise matched. Check the full name in your local strength summary.")
+        return
+    if is_strength and report["status"] == "exercise_ambiguous":
+        print("Multiple exercises share that name. The report cannot select one by name.")
+        return
+    empty = report["status"] == "empty" if uses_periods else all(
         bounds is None for bounds in report["observed_dates"].values()
     )
     if empty:
@@ -275,8 +314,8 @@ def answer(client, model, path, question, *, pending=None):
         if is_running and fields["mode"] == "comparison":
             print("Try an explicit historical range if your recent running history is sparse.")
         return
-    if is_running and "empty_comparison_period" in report["limitations"]:
-        print("One comparison period has no stored runs. Try an explicit historical range.")
+    if uses_periods and "empty_comparison_period" in report["limitations"]:
+        print("One comparison period has no stored records. Try an explicit historical range.")
     print("Null metrics are unavailable. Coverage counts show how many records had usable inputs.")
 
     # Preserve the provider's item order while dropping draft prose.
