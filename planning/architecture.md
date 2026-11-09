@@ -1,283 +1,79 @@
-# Architecture
+# Architecture and data model
 
-Status: FitNotes and Strava ingestion, separate summaries, and the combined
-[weekly report](implementation-plan.md#weekly-training-report) are implemented.
-SQLite v2 stores both sources.
-
-The first backup has now been inspected: see [FitNotes discovery](fitnotes-discovery.md).
-The target design keeps four tables, preserves source flags/type codes, and starts
-with a reps-focused report. Weight encodings and ID stability across backups remain
-unverified; the target model below does not imply a fully validated source contract.
-
-## Scope and boundaries
-
-One user, one account per source, one local SQLite database, one synchronous Python
-process. Keep the requested Python/SQLite/pytest stack. Use standard-library
-`argparse`, `sqlite3`, `csv`, `datetime`, and small dataclasses where useful.
-Avoid an ORM, web server, dataframe dependency, plugin framework, and agent framework.
-
-Planned modules inside `src/unified_fitness/` (create only with working features):
+Unified Fitness runs as a synchronous Python CLI for one user, with one
+account per source and one local SQLite database.
 
 | Module | Responsibility |
 | --- | --- |
-| `cli.py` | Parse commands, display reports, run the interactive console |
-| `ingestion/fitnotes.py`, `ingestion/strava.py` | Validate formats and map source records |
-| `db.py` | Connection setup, versioned schema, transactions, parameterized writes |
-| `analytics.py` | Fixed read-only queries and deterministic metric calculations |
-| `llm.py` | OpenAI calls, tool schemas, allowlisted dispatch, bounded chat loop |
+| `cli.py` | Parse commands and display reports |
+| `ingestion/fitnotes.py`, `ingestion/strava.py` | Validate exports, map source records, and coordinate imports |
+| `db.py` | Manage connections, schema versions, transactions, and SQL writes |
+| `analytics.py` | Read stored data and calculate reports |
+| `llm.py` | Validate and dispatch chat tool calls and manage OpenAI requests |
 
-Flow: local file -> source adapter -> validated records -> SQLite -> analytical
-functions -> CLI report or tool result -> optional AI explanation.
+## Import lifecycle
 
-```mermaid
-flowchart LR
-    F[FitNotes backup] --> FI[FitNotes importer]
-    S[Strava CSV] --> SI[Strava importer]
-    FI --> DB[(Local SQLite)]
-    SI --> DB
-    DB --> A[Fixed analytical functions]
-    A --> R[Offline console report]
-    U[Your question] --> C[Chat controller]
-    C <-->|Question and selected results / tool requests and answer| O[OpenAI API]
-    C -->|Validate and dispatch allowed tools| A
-    A -->|Measured results| C
-    C --> E[Answer with facts and interpretation]
-```
+[View the diagram in the README](../README.md#what-happens-during-an-import).
 
-The chat controller mediates every tool request. OpenAI has no direct database access.
+Preflight checks include source format and source/destination path collisions.
+Accepted records and their audit entry commit together. The five mutually
+exclusive row outcomes are inserted, updated, unchanged, rejected, and
+unsupported. Warnings are separate. FitNotes counts refer to set rows.
+See the [FitNotes contract](fitnotes-discovery.md) and
+[Strava contract](strava-discovery.md) for format and validation details.
 
-FitNotes exposes `import_file(source_path, destination_path, *, assume_performed=False)`.
-It returns inserted, updated, unchanged, rejected, and unsupported counts along
-with bounded aggregate diagnostics and separate warnings. The adapter owns source
-mapping and coordinates the transaction. Persistence owns the SQL writes.
+| Source record | Stored identity | Reporting date | Preserved evidence |
+| --- | --- | --- | --- |
+| FitNotes set | `training_log._id` | Recorded date | Raw load, unit code, and completion and pending flags |
+| FitNotes exercise | `exercise._id` | N/A | Name, type code, and weight unit code |
+| Strava run | `Activity ID` | Singapore date derived from the supported timestamp format | Raw start text and UTC instant |
+
+An unchanged repeat leaves domain rows and their provenance intact and appends
+an audit entry. A changed payload with a matching ID updates its row. Omitted IDs
+remain stored. An older export can overwrite newer values when IDs match. Real
+cross-backup FitNotes ID stability still needs controlled verification.
 
 ## Relational model
 
-Internal primary keys are integers; source identifiers are TEXT to preserve their
-exact representation. `source` is a stable namespace (`fitnotes` or `strava`).
-Source fields below are canonical requirements, not claims about export columns.
+[View the diagram in the README](../README.md#what-sqlite-stores).
 
-| Table | Columns and constraints |
-| --- | --- |
-| `imports` | `id` PK, `source`, `file_sha256`, `imported_at_utc`, `adapter_version`, `options_json`, outcome counts; one row per committed attempt |
-| `running_activities` | `id` PK, `source`, `source_record_id`, `activity_date`, nullable `started_at_raw`, `started_at_utc`, `timezone_name`, `distance_m`, `moving_time_s`, `elapsed_time_s`, `elevation_gain_m`; `last_import_id` FK; UNIQUE (`source`, `source_record_id`) |
-| `exercises` | `id` PK, `source`, `source_exercise_id`, `name`; nullable INTEGER `source_type_id`, `source_weight_unit_id`; UNIQUE (`source`, `source_exercise_id`) |
-| `strength_sets` | `id` PK, `source`, `source_record_id`, `exercise_id` FK, `performed_on`, nullable `repetitions`, `load_kg`, `source_load`, `source_load_unit`, `load_kind`, `set_order`; nullable INTEGER `source_unit_code`, `source_is_complete`, `source_is_pending_update`; `last_import_id` FK; UNIQUE (`source`, `source_record_id`) |
+| Table | Grain | Key or constraint |
+| --- | --- | --- |
+| `imports` | One committed import attempt | Integer primary key. Records file SHA-256, UTC import time, adapter version, options, and outcome counts. |
+| `exercises` | One referenced source exercise | Unique `(source, source_exercise_id)`. |
+| `strength_sets` | One stored source set | Unique `(source, source_record_id)`. Requires an exercise and a last-change import. |
+| `running_activities` | One stored source run | Unique `(source, source_record_id)`. Requires a last-change import. |
 
-For the first FitNotes slice, import only exercises referenced by accepted sets.
-Preserve `metric_weight` in `source_load` and retain the raw type/unit/flag codes.
-Leave `source_load_unit`, `load_kg`, `load_kind`, and `set_order` NULL until their
-meaning is established. Store source schema version, relevant settings, and the
-explicit completion policy in the existing import `options_json`; no extra table.
+The diagram shows selected columns. See [db.py](../src/unified_fitness/db.py)
+for the full DDL. Source IDs are stored as text. Foreign keys are enabled on
+every connection. A record's import pointer identifies the attempt that last
+inserted or changed the record. Exercise definitions can change independently
+of set payloads.
 
-### Schema lifecycle and FitNotes contract
+Schema v1 contains imports, exercises, and strength sets. An import creates v2
+for a new database or upgrades a valid v1 database by adding running activities
+within the same transaction. Read-only reports can open v1. Check
+`PRAGMA user_version` to identify the schema. Incompatible schemas produce an
+error.
 
-Write transactions create v2 or upgrade a valid v1 database by adding
-running_activities. The migration preserves the existing tables and rolls
-back with the import on failure. Read-only summaries accept both versions.
-The FitNotes adapter owns both connection lifecycles so validation and file
-collision checks precede destination writes. It accepts standalone exports
-without SQLite sidecars, opens them read-only, and checks the hash across the
-read. Settings are optional audit context. All mapped set and exercise fields
-are required, and malformed values reject the row. Diagnostics aggregate fixed
-reasons without exposing record IDs. Exercise-only changes update the shared
-exercise definition. Set counts and last-change provenance track set payloads.
+FitNotes normalized load, unit, load kind, and set order remain NULL. A raw zero
+weight carries no validated physical-load meaning. Strava distance is stored
+in meters and durations in seconds. Unknown measurements use NULL. A training
+day is a distinct recorded date, so a date with both running and lifting
+contributes one combined training day.
 
-The FitNotes importer supports the inspected SQLite `user_version=22` and validates
-required tables/columns and actual stored values; do not copy all source tables.
-Source and destination must be different files, including aliases/hard links.
-Reject an incompatible source or destination schema before changing stored data.
+## Reports and chat
 
-Initially accept valid type-code `0` set records with zero distance/duration.
-Other types or nonzero distance/duration are explicitly unsupported, not silently
-truncated. Preserve finite nonnegative raw load without conversion, including
-nonzero values; normalization means canonical source-ID text, valid ISO calendar
-dates, and nonnegative integer reps. Unverified physical units remain NULL with a
-clear warning. This scope does not validate the meaning of other exercise types.
+[View the diagram in the README](../README.md#what-happens-when-you-use-chat).
 
-Require an explicit import option such as `--assume-performed` to assert the file
-contains performed sets, and record it in import metadata. The user has already
-confirmed this for the inspected backup; no new confirmation is needed for that
-file. Do not hardcode its filename, contents, or IDs into the importer.
+Weeks start Monday. Report windows use inclusive calendar dates. FitNotes dates
+stay as recorded and running dates use Asia/Singapore. Coverage counts describe
+which stored records contributed. Import exclusions are counted at import time,
+separately from report coverage.
 
-Implement same-ID upserts and test them on synthetic snapshots under a stable-ID
-assumption. That verifies our code, not FitNotes behavior across edits/reorders or
-restores. Keep the latter limitation explicit until controlled source comparisons
-are available; it need not block same-file idempotence or reps-only reporting.
-
-Import outcome counts refer to source set rows, not exercise definitions:
-inserted + updated + unchanged + rejected + unsupported = rows examined.
-Warnings may overlap these categories. A repeated identical import leaves exercise
-and set rows, including their last-change provenance, unchanged; it may append
-one committed `imports` audit row. No deletion reconciliation or file-hash skipping.
-
-```mermaid
-erDiagram
-    IMPORTS ||--o{ RUNNING_ACTIVITIES : "last imported"
-    IMPORTS ||--o{ STRENGTH_SETS : "last imported"
-    EXERCISES ||--o{ STRENGTH_SETS : "describes"
-    IMPORTS {
-        integer id PK
-        text source
-        text file_sha256
-    }
-    RUNNING_ACTIVITIES {
-        integer id PK
-        text source_record_id
-        text activity_date
-        real distance_m
-        real moving_time_s
-        integer last_import_id FK
-    }
-    EXERCISES {
-        integer id PK
-        text source_exercise_id
-        text name
-    }
-    STRENGTH_SETS {
-        integer id PK
-        text source_record_id
-        text performed_on
-        integer repetitions
-        real load_kg
-        integer exercise_id FK
-        integer last_import_id FK
-    }
-```
-
-Diagram shows selected columns. Each exercise can have many sets; each record points
-to the import that last inserted or changed it. This is provenance, not full revision
-history. Create tables only when their source milestone needs them.
-
-Foreign keys enabled on every connection. Required identifiers and calendar dates
-are NOT NULL. Validate finite, nonnegative distance/duration/load values and integer
-repetitions; encode stable rules with CHECK constraints once source semantics are
-confirmed. Unknown is NULL, never a fabricated zero. Start with date and exercise/date
-indexes only where the first reports need them. Use `PRAGMA user_version` and explicit
-schema changes; do not silently rebuild an existing database on version mismatch.
-
-No universal activity table or strength session table initially. Sets retain their
-source IDs, exercise identity, and date; this supports progression and training-day
-counts without guessing session boundaries. If FitNotes exposes reliable session
-IDs needed for a question, revisit the model after inspection. Report training days
-as days, not workout sessions. Cross-source frequency uses distinct dates (a day
-with both a run and lifting counts once).
-
-## Ingestion, identity, and normalization
-
-- Open FitNotes read-only. Check the SQLite header, integrity, `sqlite_master`,
-  table/column metadata, keys, joins, schema version, unit settings, and date formats
-  before defining mappings. No source table names or IDs have been assumed.
-- Inspect Strava's actual CSV headers, including duplicate names, delimiters,
-  encoding, sport values, identifiers, date conventions, and unit representations.
-  Support validated running categories only; count excluded sports. Let the user
-  extract the official archive; ZIP handling and original activity parsing are deferred.
-- Prefer stable source keys for repeatable imports. Never deduplicate sets by
-  exercise/date/weight/reps: identical sets can be legitimate. If stable IDs are
-  absent, stop and agree on a tested identity policy before implementing that source.
-  FitNotes `training_log._id` identifies sets in this backup; test ID stability
-  through controlled edits/reordering before promising cross-backup updates.
-- Include the inspected backup's user-confirmed performed sets regardless of
-  `is_complete` or `is_pending_update`, preserving both flags and recording the
-  policy. Do not generalize that confirmation to future backups or infer historical
-  completion from the current app setting. Unsupported types/metrics are counted.
-- Same IDs and payloads are unchanged; changed payloads update existing rows. A file
-  hash records provenance, not record identity, and does not automatically skip an
-  import (adapter fixes may need reprocessing). No deletion when an ID disappears.
-  Without reliable source modification times, the most recently imported values
-  win, even from an older export; report updates and document this limitation.
-- Preflight format errors cause no writes. Reject malformed required fields or
-  ambiguous identities with reasons. Distinguish an absent optional column from an
-  explicitly empty value: absent columns preserve existing values on update (NULL
-  on insert); explicit empties clear a value only if the validated source contract
-  defines them as missing. A malformed optional value may become NULL with a warning
-  on insert; on update, reject that record and preserve its existing values rather
-  than silently erase valid history. Include warnings in the import report.
-  Commit all accepted records and the import report in one transaction; unexpected
-  errors roll back the entire attempt. Failed attempts print diagnostics, not a
-  misleading successful audit row. Conflicting duplicate IDs in one file fail preflight.
-- Normalize distance to meters, time to seconds, load to kilograms. Preserve raw
-  load/unit and timestamp evidence where needed for ambiguous semantics. Do not infer
-  units from value magnitude. Validate per-exercise unit overrides, completion flags,
-  bodyweight/assisted loads, and non-strength FitNotes records before mapping them.
-  Unsupported records must be counted, not silently coerced into strength sets.
-- Preserve date-only FitNotes records as dates. Store UTC only when the source has an
-  offset or an explicitly confirmed timezone mapping; retain raw timestamp text.
-  Never fabricate midnight or label naive times UTC. Reject unresolved calendar-date
-  ambiguity. Use the confirmed reporting timezone (`Asia/Singapore`) and record
-  assumptions in import options; historical travel/DST semantics need validation.
-  `activity_date` is the date in that reporting timezone when the instant is known;
-  date-only records retain their recorded date. Keep the reporting timezone fixed
-  per database, checking it against committed import options before subsequent
-  imports. Reject a changed setting until an explicit rebuild/reimport is performed;
-  do not silently mix dates calculated under different timezone policies.
-
-## Analytics and AI boundary
-
-The CLI offers separate all-time summaries and an inclusive date-bounded weekly
-report. The weekly report reads both sources in one snapshot and combines
-recorded dates without inferring sessions. Defer load-based progression and volume until units and load
-semantics are validated. Date ranges use inclusive ISO
-calendar dates; weeks start Monday (confirmed). Return range, units, observed source
-date ranges, sample counts, and counts
-of stored records missing/excluded from each calculation. Import-level rejection
-totals are separate diagnostics: they cannot reliably be assigned to a requested
-date range, especially when rejected dates are invalid. Observed date ranges do
-not establish complete coverage; missing history is not proof of inactivity.
-
-Pace = summed valid moving seconds / summed corresponding distance in kilometers;
-exclude zero distances and never silently substitute elapsed time. Show duration
-coverage and label this aggregate pace, not an average of individual paces.
-Strength progression starts with observed load/reps by exercise and comparable load
-kind; volume is sum(load_kg * reps) only for records with known compatible external
-loads. Do not interpret unknown load as bodyweight or mix assistance with lifted load.
-Estimated 1RM and causal conclusions are deferred.
-
-The first OpenAI Responses API slice exposes only the combined weekly report
-through a strict function schema. The application validates dates and bounds
-locally. The database path comes from CLI configuration, and the report uses
-fixed parameterized queries over a read-only connection.
-There is no SQL, arbitrary file, shell, or write tool. Strict schemas constrain
-arguments; they do not establish correctness of answers. See the official
-[function-calling documentation](https://developers.openai.com/api/docs/guides/function-calling).
-
-Bound tool rounds, result sizes, timeouts, and retries. Return clear errors for
-unsupported questions or insufficient data. Require tool evidence for numeric
-claims and separate measured facts from interpretations and optional suggestions.
-Treat exercise names and other source strings as data, never instructions.
-
-Send questions and necessary aggregates only. Do not upload originals, GPS routes,
-or free-text workout notes. Disclose remote processing when chat starts. Use
-`store=false` where supported, without promising zero provider retention; verify
-provider data handling when implementing chat. Do not persist chats by default.
-Tests use fake API responses; live API calls are explicit and optional.
-See the [one-tool console plan](implementation-plan.md#next-slice-one-tool-ai-console)
-for the request budget, aggregate validation, and acceptance tests.
-
-### Conversational console
-
-The first console handled each question independently and replaced model
-replies without a tool call with a fixed scope and date prompt. That guard
-prevents unsupported claims about recorded training, but also suppresses
-ordinary answers and useful clarifying questions.
-
-Accept free-form questions. Chat can answer general questions directly and
-must ground claims about the user's recorded training in deterministic tool
-evidence. If the data or available tools cannot answer a question, explain the
-specific gap. Distinguish an empty reporting window from missing metrics and
-unsupported analysis.
-
-Keep explicit, validated dates at the weekly tool boundary. Resolve unambiguous
-relative dates locally using the Asia/Singapore calendar and show the inclusive
-range used. Ask a focused follow-up when the range is unclear. Retain only the
-pending question and relevant clarification context in memory. Include only
-context needed for the current answer in provider requests.
-
-Keep tool dispatch allowlisted, read-only, and bounded. Additional analytical
-tools can be evaluated later as separate capabilities.
-
-The [training trends design](training-trends-design.md) keeps
-calculations in analytics.py and use the existing read-only SQLite snapshot.
-Each call returns bounded aggregates with explicit periods, coverage, and
-comparison eligibility. Chat selects one allowlisted report and explains
-the evidence. The weekly tool retains its existing contract.
+Chat can dispatch weekly training, running trends, running records, or strength
+activity. Each turn permits one successful report call. Tool dispatch uses
+validated arguments and a fixed allowlist. The database, SQL execution, files,
+and shell remain local. A named strength report can include the exercise name
+from the question. See the [user guide](../docs/user-guide.md#use-the-optional-ai-console)
+for configuration, privacy, and request limits.

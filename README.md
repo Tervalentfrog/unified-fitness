@@ -1,244 +1,155 @@
 # Unified Fitness
 
-A local-first, single-user application for importing FitNotes strength history and
-Strava running history into SQLite, then querying measured trends from a console.
+Turn FitNotes strength records and Strava running exports into local SQLite
+reports. Use the command line for offline analytics or enable the optional
+OpenAI console for questions about recorded training.
 
-**Status:** FitNotes v22 and Strava imports, offline summaries, and an optional one-tool AI console are implemented.
+```mermaid
+flowchart TD
+    F["FitNotes v22 backup"] --> I["Validate and import"]
+    S["Strava activities.csv"] --> I
+    I --> D[("Local SQLite")]
+    D --> R["Deterministic reports"]
+    R --> J["Offline JSON"]
+    R --> C["Optional chat with OpenAI"]
+```
 
-## Development setup
+## Setup
 
 Use Python 3.11 or newer. From the repository root in PowerShell:
 
-~~~
+```powershell
 py -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -e ".[dev]"
-.\.venv\Scripts\python.exe -m pytest
-~~~
-
-On macOS/Linux, use `python3 -m venv .venv` and `.venv/bin/python`.
-Imports and summaries run offline. On Windows, the package installs tzdata
-for Singapore reporting dates. Other platforms can use system IANA timezone data.
-
-## Import and summarize
-
-Place a standalone FitNotes SQLite v22 export in `data/`. Replace
-`your-backup.fitnotes` with its filename. Use `--assume-performed` only
-after confirming the sets in that export were performed.
-
-~~~
 .\.venv\Scripts\unified-fitness.exe --help
-.\.venv\Scripts\unified-fitness.exe --db data/fitness.sqlite3 import-fitnotes data/your-backup.fitnotes --assume-performed
-.\.venv\Scripts\unified-fitness.exe --db data/fitness.sqlite3 summary
-~~~
-
-The default database path is `data/unified-fitness.sqlite3`. On macOS/Linux
-the command is `.venv/bin/unified-fitness`. Summary prints JSON with overall
-and per-exercise set and repetition totals and the overall count of distinct
-recorded training dates. Treat report output as personal data.
-
-The importer accepts valid type-0 rows with zero distance and duration. It
-preserves raw weights and codes and leaves normalized load, unit, load kind,
-and set order empty. Both raw flags are retained. Matching source IDs update
-the stored payload when it changes. Missing IDs are retained. Real ID stability
-across edits, reorders, and restores remains unverified, and importing an older
-snapshot can overwrite newer values for matching IDs.
-
-Import output counts inserted, updated, unchanged, rejected, and unsupported
-sets. Stderr gives counts by reason and separate warnings. Exit codes are 0
-for success, 1 for a fatal error, 2 for invalid usage, and 3 for a committed
-import with rejected or unsupported rows.
-
-The milestone review passed all 26 tests and verified two imports of the
-confirmed backup into a fresh database. See the [review results](planning/handoff.md#milestone-review)
-for the integrity, normalization, and repeat-import checks.
-
-## Import and summarize runs
-
-Use the extracted activities.csv from the validated Strava bulk-export layout.
-Replace the example CSV path below with the local path under data/.
-
-~~~powershell
-.\.venv\Scripts\unified-fitness.exe --db data/fitness.sqlite3 import-strava data/strava-export/activities.csv
-.\.venv\Scripts\unified-fitness.exe --db data/fitness.sqlite3 running-summary
-~~~
-
-A successful import transaction upgrades an existing v1 database to v2 and
-preserves its FitNotes data and audit history. The strength summary remains
-available as summary. The Strava importer accepts Run rows and counts other
-activity types as unsupported. Exit code 3 means the import committed with
-exclusions, including non-running activities.
-
-The running summary reports run count, distinct Singapore running days, known
-distance, moving and elapsed seconds, reported ascent, and moving pace in
-seconds per kilometer. Coverage counts show which runs contributed. Pace
-uses total moving time divided by corresponding distance for runs with both
-values positive. Empty metrics, unrepresentable totals, and unavailable pace are
-JSON null. Coverage counts still reflect records with the relevant inputs.
-
-See the [Strava source contract and verification](planning/strava-discovery.md)
-for the CSV layout, timezone policy, and repeat-import results.
-
-## Report weekly training
-
-Point the command at the database used for both imports.
-
-~~~powershell
-.\.venv\Scripts\unified-fitness.exe --db data/fitness.sqlite3 weekly-summary --from 2024-01-01 --to 2024-02-29
-~~~
-
-The date range is inclusive and limited to 366 days. The JSON report includes
-every Monday-start week intersecting that range, even weeks with no stored
-records. FitNotes dates stay as recorded and runs use Singapore reporting
-dates. A date with both sources counts as one combined training day.
-Each week includes separate strength and running totals with coverage counts.
-Unknown metrics are null. The report reads both sources in one snapshot and
-can read a v1 database as strength-only.
-
-## Ask about weekly training
-
-Install the optional SDK. Put `OPENAI_API_KEY` and `OPENAI_MODEL` in a local
-`.env` file in the directory where you launch chat. Use one UTF-8
-`NAME=value` line per setting. Existing process environment values take
-precedence, even when blank. Choose a Responses API model your account can
-use with function calling and Structured Outputs.
-
-~~~powershell
-.\.venv\Scripts\python.exe -m pip install -e ".[ai]"
-.\.venv\Scripts\unified-fitness.exe chat
-~~~
-
-Chat uses `data/unified-fitness.sqlite3` by default. Pass `--db` before
-`chat` to select another database. Reporting uses Asia/Singapore.
-
-Ask general questions directly or ask about recorded training, for example
-“How many runs did I record last week?” Chat resolves today, yesterday,
-this week, last week, this month, and last month in Asia/Singapore. Weeks
-start Monday. “This week” and “this month” run through today. For other
-ranges, supply both dates in YYYY-MM-DD form. If chat asks for a range,
-reply with a supported phrase or a range such as `2024-01-01 to 2024-01-28`.
-Type `/quit` or send EOF to exit.
-
-Chat sends the question and the read-only weekly report for the selected date
-range to OpenAI for remote processing. Keep private details out of questions.
-The report contains aggregate evidence and coverage. The database, its path,
-source IDs, exercise names, workout notes, and GPS tracks stay local.
-Chat requests `store=false`. Provider retention depends on applicable data
-controls. [OpenAI API data controls](https://developers.openai.com/api/docs/guides/your-data)
-
-Chat displays deterministic evidence separately from model commentary and
-reports empty windows locally. Each submitted turn allows one successful tool call
-and up to two requests. The limits are 2,000 question characters, 32 KiB of
-serialized evidence, and 1,024 output tokens per request, with a 30-second
-SDK timeout, zero retries, and redirects disabled. Chat keeps only a pending
-question in memory for date clarification. It saves no transcript. Imports
-and offline reports require neither the SDK nor credentials.
-
-The Windows venv pytest suite passed all 89 tests with a fake API client and
-invented data. Installed CLI checks covered help, a synthetic weekly report,
-an invalid date range, and chat setup errors. Live SDK and model behavior
-remain unverified. See the [console verification](planning/implementation-plan.md#console-verification).
-
-## Compare running trends
-
-The default comparison uses the latest four completed Singapore calendar
-weeks and the preceding four. Choose an explicit historical range if recent
-history is sparse. A comparison with explicit dates uses the immediately
-preceding window of equal length.
-
-~~~powershell
-.\.venv\Scripts\unified-fitness.exe running-trends
-.\.venv\Scripts\unified-fitness.exe running-trends --mode comparison --from 2024-02-01 --to 2024-02-29
-.\.venv\Scripts\unified-fitness.exe running-trends --mode range --from 2024-01-01 --to 2024-02-29
-.\.venv\Scripts\unified-fitness.exe running-trends --mode year --year 2024
-.\.venv\Scripts\unified-fitness.exe running-trends --mode yearly
-.\.venv\Scripts\unified-fitness.exe running-trends --mode all_time
-~~~
-
-The report shows recorded runs, distinct running days, known distance and
-distance-weighted moving pace. Pace changes compare runs in the same distance
-band and require three eligible runs per band on each side. Lower seconds
-per kilometer means a faster recorded pace. Route, terrain, and effort
-remain unaccounted for.
-
-`range` shows weekly buckets, `year` shows monthly buckets, and `yearly`
-shows up to 12 calendar years ending at the latest recorded year. Partial
-periods are labelled. `all_time` includes older stored history even when
-the yearly view omits it.
-
-In chat, try “Is my running pace improving?”, “Show my running history by
-year”, or “What is my all-time running distance?” Chat can use one report
-per turn and displays its local evidence before model commentary.
-
-## Check running records and patterns
-
-~~~powershell
-.\.venv\Scripts\unified-fitness.exe running-records fastest_pace --distance-band 5_to_under_10_km
-.\.venv\Scripts\unified-fitness.exe running-records weekday
-.\.venv\Scripts\unified-fitness.exe running-records time_of_day --mode year --year 2024
-~~~
-
-Fastest pace uses the whole run's average moving pace and reports ties.
-Choose `under_5_km`, `5_to_under_10_km`, or `10_km_or_more`. Time of day
-counts recorded UTC starts in six-hour Singapore clock buckets. Weekday
-uses stored Singapore reporting dates. Both report ties and coverage.
-Reports default to all recorded history. Use `--mode year --year YYYY`
-or `--mode range --from YYYY-MM-DD --to YYYY-MM-DD` to narrow the scope.
-
-In chat, try “What was my fastest moving pace for runs 5 to under 10 km?”
-or “Which weekday do I run most often?” A broad running-period question
-can prompt for weekday or time of day. Exact-distance finish times,
-splits, and seasonal patterns remain deferred.
-
-## Review strength activity
-
-Use the full exercise name shown by `summary`. Names match case-insensitively
-after trimming whitespace. If more than one stored exercise has that name,
-the report returns an ambiguity status. Omit `--exercise` for overall totals.
-
-~~~powershell
-.\.venv\Scripts\unified-fitness.exe summary
-.\.venv\Scripts\unified-fitness.exe strength-activity --mode all_time --exercise "Your exercise name"
-.\.venv\Scripts\unified-fitness.exe strength-activity --mode year --year 2024
-~~~
-
-Strength activity uses the same period modes as running trends. It reports
-sets, known repetitions, and distinct recorded training dates. Reps are a
-subtotal when coverage is incomplete. In chat, try “How many sets of
-Barbell Bench Press did I record in 2024?” using the name in your own
-summary. For one named exercise, the report can also summarize verified
-external loads in kilograms. It shows max recorded load, kg × reps volume,
-and an Epley estimate from sets of 2–10 reps. The estimate assumes an effort
-level that FitNotes does not record and should be treated as approximate.
-Volume is a subtotal when eligible set coverage is incomplete.
-
-The current FitNotes importer preserves raw weights and leaves normalized
-load fields empty. Load metrics therefore remain unavailable for existing
-imports pending [validation of the source encoding](planning/implementation-plan.md#load-based-strength-progression-slice).
-
-## Local data and credentials
-
-Store private exports and databases under `data/`. Keep credentials, raw data,
-personal reports, and transcripts out of Git. Only synthetic test fixtures belong
-in `tests/fixtures/`. Review staged files before every commit: ignore rules are not
-a guarantee against secrets in arbitrary files.
-
-## Layout and plans
-
-```text
-planning/                 Architecture, milestones, and decisions
-src/unified_fitness/       FitNotes and Strava ingestion, storage, CLI and summaries
-tests/fixtures/            Guidance for future synthetic test data
-data/                     Ignored local personal data
-.env.example              Environment settings reference
-.gitignore                Python, credentials, and personal data exclusions
-pyproject.toml            Packaging and pytest configuration
-README.md                 Setup and project status
 ```
 
-- [Architecture and proposed data model](planning/architecture.md)
-- [Prioritized implementation plan](planning/implementation-plan.md)
-- [Decisions, trade-offs, and open questions](planning/decisions.md)
-- [FitNotes discovery](planning/fitnotes-discovery.md)
-- [FitNotes implementation handoff](planning/handoff.md)
-- [Historical FitNotes implementation prompt](planning/next-session-prompt.md)
-- [Strava discovery and verification](planning/strava-discovery.md)
+On macOS/Linux, use `python3 -m venv .venv`, `.venv/bin/python` and
+`.venv/bin/unified-fitness`. Windows installs `tzdata` for Singapore reporting
+dates. Imports and offline reports work without the AI extra or API credentials.
+
+## Quick start
+
+Place your exports under `data/`. Substitute your filenames below and run either
+or both imports. Use `--assume-performed` after confirming the FitNotes export
+contains performed sets. The commands share `data/unified-fitness.sqlite3`.
+
+```powershell
+.\.venv\Scripts\unified-fitness.exe import-fitnotes data/your-backup.fitnotes --assume-performed
+.\.venv\Scripts\unified-fitness.exe import-strava data/strava-export/activities.csv
+.\.venv\Scripts\unified-fitness.exe weekly-summary --from 2024-01-01 --to 2024-01-28
+```
+
+Use dates covered by your exports. Strava imports can return exit code `3`
+when they commit runs and exclude other sports. See the [user guide](docs/user-guide.md)
+for import outcomes and report examples.
+
+| I want to… | Command |
+| --- | --- |
+| See lifetime set, rep, and training-day totals | `summary` |
+| See lifetime run totals and moving pace | `running-summary` |
+| See running and lifting together by week | `weekly-summary --from YYYY-MM-DD --to YYYY-MM-DD` |
+| Compare periods or browse running history | `running-trends` |
+| Find my fastest pace or common running times | `running-records` |
+| Compare strength activity or filter by exercise | `strength-activity` |
+| Ask a question in natural language | `chat` after [AI setup](docs/user-guide.md#use-the-optional-ai-console) |
+
+## How it works
+
+### What happens during an import
+
+Both importers validate the export, then save accepted records and their audit
+entry together. Reimporting the same source IDs updates changed records and
+keeps unchanged records intact.
+
+```mermaid
+flowchart TD
+    F["Read source export"] --> V{"Preflight passes?"}
+    V -->|No| E["Fatal error"]
+    V -->|Yes| T["One transaction<br/>Create or migrate schema if needed<br/>Upsert rows by source ID<br/>Write import audit"]
+    T -->|Write fails| B["Roll back and report error"]
+    T -->|Commit succeeds| X{"Rows excluded?"}
+    X -->|Yes| P["Exit 3 · Committed with exclusions"]
+    X -->|No| S["Exit 0 · Committed"]
+```
+
+### What SQLite stores
+
+Each lift set links to an exercise. Each run or set links to the import that
+last wrote it. The diagram shows the main columns and relationships.
+
+```mermaid
+erDiagram
+    IMPORTS ||..o{ RUNNING_ACTIVITIES : "last wrote"
+    IMPORTS ||..o{ STRENGTH_SETS : "last wrote"
+    EXERCISES ||..o{ STRENGTH_SETS : "describes"
+    IMPORTS {
+        integer id PK
+        text source
+        text file_sha256
+        text imported_at_utc
+        text options_json
+    }
+    RUNNING_ACTIVITIES {
+        integer id PK
+        text source_record_id
+        text activity_date
+        real distance_m
+        real moving_time_s
+        integer last_import_id FK
+    }
+    EXERCISES {
+        integer id PK
+        text source_exercise_id
+        text name
+    }
+    STRENGTH_SETS {
+        integer id PK
+        text source_record_id
+        text performed_on
+        integer repetitions
+        real load_kg
+        integer exercise_id FK
+        integer last_import_id FK
+    }
+```
+
+### What happens when you use chat
+
+Offline reports read SQLite directly. Optional chat sends your question to
+OpenAI and can send one locally calculated report for a question about
+recorded training. It shows the local evidence alongside the model reply.
+
+```mermaid
+sequenceDiagram
+    participant U as User
+    participant C as Local chat
+    participant A as Local analytics
+    participant O as OpenAI API
+    U->>C: Ask a question
+    C->>O: Send question
+    opt Recorded training needs a report
+        O-->>C: Request an allowed report
+        C->>A: Validate arguments and run report
+        A-->>C: Return read-only SQLite results
+        C-->>U: Show calculated evidence
+        C->>O: Send selected report when usable
+    end
+    O-->>C: Return model reply when requested
+    C-->>U: Show model reply or local status
+```
+
+## Where to look next
+
+| Document | What it covers |
+| --- | --- |
+| [User guide](docs/user-guide.md) | Imports, command examples, reporting periods, coverage, and chat setup |
+| [Architecture and data model](planning/architecture.md) | Import lifecycle, SQLite relationships, and the local-to-remote boundary |
+| [Implementation plan](planning/implementation-plan.md) | Milestones, verification, and remaining work |
+| [Engineering decisions](planning/decisions.md) | Design choices and open questions |
+| [FitNotes discovery](planning/fitnotes-discovery.md) and [Strava discovery](planning/strava-discovery.md) | Validated source layouts and mapping limits |
+
+Keep personal exports, databases, and reports in ignored `data/`. Keep API
+credentials in the environment or an ignored local `.env` file.
+
+Run the offline tests with `.\.venv\Scripts\python.exe -m pytest`.
