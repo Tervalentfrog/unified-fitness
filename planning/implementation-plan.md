@@ -8,7 +8,8 @@ FitNotes discovery is documented in [fitnotes-discovery.md](fitnotes-discovery.m
 Its schema and current records are inspected, but weight/unit encodings and ID
 stability across backups remain unverified. The accepted first report is sets,
 reps, and recorded training days; load-based progression waits for unit validation.
-Strava discovery has not started.
+[Strava discovery](strava-discovery.md) is complete for the inspected export.
+The running importer and schema migration are pending.
 
 | Priority | Milestone | Completion evidence |
 | --- | --- | --- |
@@ -55,8 +56,8 @@ after validating that source. Do not invent a FitNotes schema to keep coding.
 ## Immediate next task and prerequisites
 
 The FitNotes slice passed the [milestone review](handoff.md#milestone-review).
-Next, validate a real Strava export, then add running ingestion and reporting
-once the CSV contract is understood. Confirm FitNotes weight encoding before implementing load-based reports
+Next, review the [Strava source contract](strava-discovery.md), then implement
+its CSV importer, v1-to-v2 migration, and running summary. Confirm FitNotes weight encoding before implementing load-based reports
 and validate real ID behavior before promising updates across edited backups.
 
 ## Initialization verification

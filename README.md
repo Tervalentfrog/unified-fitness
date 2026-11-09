@@ -87,4 +87,5 @@ README.md                 Setup and project status
 - [Implementation handoff](planning/handoff.md)
 - [Ready-to-paste next-session prompt](planning/next-session-prompt.md)
 
-Next milestone: validate a Strava export before adding running ingestion.
+Strava discovery is documented in the [export analysis](planning/strava-discovery.md).
+The next implementation milestone is the running importer and summary.
