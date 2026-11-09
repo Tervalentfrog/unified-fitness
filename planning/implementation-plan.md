@@ -265,6 +265,25 @@ The Windows venv suite passed all 89 tests with
 The tests used a fake API client. Live model compatibility and reply quality
 remain unverified.
 
+## Next MVP slice: running trends
+
+See the [tool contracts and source assessment](training-trends-design.md).
+The approved slice covers running comparisons, date ranges, calendar years,
+yearly breakdowns, and all-time totals.
+
+1. Implement the deterministic running report first. Reuse the run query
+   shape and pace eligibility rules. Verify offline calculations, comparable
+   pace bands, and bounded all-time and yearly output before exposing the
+   tool to chat.
+2. Add the verified running report to the strict chat allowlist. Keep
+   one successful tool call and two provider requests per turn. Verify
+   routing, read-only access, and payload limits with a fake client.
+3. Review the running slice before scheduling strength progression,
+   running records, or start-time patterns. Validate FitNotes load semantics
+   with controlled exports before scheduling weight-based analytics.
+
+The running slice fits the current SQLite v2 schema and dependencies.
+
 ## Initialization verification
 
 No existing files, Git metadata, or applicable parent `AGENTS.md` were found.

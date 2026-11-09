@@ -275,3 +275,9 @@ context needed for the current answer in provider requests.
 
 Keep tool dispatch allowlisted, read-only, and bounded. Additional analytical
 tools can be evaluated later as separate capabilities.
+
+The [training trends design](training-trends-design.md) keeps
+calculations in analytics.py and use the existing read-only SQLite snapshot.
+Each call returns bounded aggregates with explicit periods, coverage, and
+comparison eligibility. Chat selects one allowlisted report and explains
+the evidence. The weekly tool retains its existing contract.
