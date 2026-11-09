@@ -253,3 +253,25 @@ provider data handling when implementing chat. Do not persist chats by default.
 Tests use fake API responses; live API calls are explicit and optional.
 See the [one-tool console plan](implementation-plan.md#next-slice-one-tool-ai-console)
 for the request budget, aggregate validation, and acceptance tests.
+
+### Planned conversational console
+
+The current console handles each question independently and replaces model
+replies without a tool call with a fixed scope and date prompt. That guard
+prevents unsupported claims about recorded training, but also suppresses
+ordinary answers and useful clarifying questions.
+
+Accept free-form questions. Chat can answer general questions directly and
+must ground claims about the user's recorded training in deterministic tool
+evidence. If the data or available tools cannot answer a question, explain the
+specific gap. Distinguish an empty reporting window from missing metrics and
+unsupported analysis.
+
+Keep explicit, validated dates at the weekly tool boundary. Resolve unambiguous
+relative dates locally using the Asia/Singapore calendar and show the inclusive
+range used. Ask a focused follow-up when the range is unclear. Retain only the
+pending question and relevant clarification context in memory. Include only
+context needed for the current answer in provider requests.
+
+Keep tool dispatch allowlisted, read-only, and bounded. Additional analytical
+tools can be evaluated later as separate capabilities.

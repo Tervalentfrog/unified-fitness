@@ -235,6 +235,28 @@ implementation brief. Model access and response quality remain unverified.
   See [OpenAI function calling](https://developers.openai.com/api/docs/guides/function-calling)
   and [API data controls](https://developers.openai.com/api/docs/guides/your-data).
 
+## Planned follow-up: conversational chat
+
+Allow direct replies to general questions, focused clarification when more
+information is needed, and specific explanations when recorded data or tool
+coverage is insufficient. Keep deterministic evidence separate from model
+commentary. Claims about recorded training require tool evidence.
+
+- Start with the existing weekly summary tool. Resolve supported relative
+  ranges locally in Asia/Singapore and display the dates used. Keep the tool's
+  explicit date arguments, inclusive range, and 366-day limit.
+- Carry a pending question across a clarification turn in memory. Clear it
+  when resolved or superseded. Keep transcripts out of persistent storage and
+  send only the context needed to answer.
+- Preserve the existing tool allowlist and per-question request limits.
+  Consider more analytical tools after the conversational behavior is verified.
+- Test direct replies without database reads, relative dates at calendar
+  boundaries, clarification and context clearing, and distinct responses for
+  empty windows, missing metrics, and unsupported analyses.
+
+This follow-up is design only. The current console still uses the one-tool
+behavior documented above.
+
 ## Initialization verification
 
 No existing files, Git metadata, or applicable parent `AGENTS.md` were found.
