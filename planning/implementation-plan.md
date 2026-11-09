@@ -235,7 +235,7 @@ implementation brief. Model access and response quality remain unverified.
   See [OpenAI function calling](https://developers.openai.com/api/docs/guides/function-calling)
   and [API data controls](https://developers.openai.com/api/docs/guides/your-data).
 
-## Planned follow-up: conversational chat
+## Conversational chat follow-up
 
 Allow direct replies to general questions, focused clarification when more
 information is needed, and specific explanations when recorded data or tool
@@ -248,14 +248,22 @@ commentary. Claims about recorded training require tool evidence.
 - Carry a pending question across a clarification turn in memory. Clear it
   when resolved or superseded. Keep transcripts out of persistent storage and
   send only the context needed to answer.
-- Preserve the existing tool allowlist and per-question request limits.
+- Preserve the existing tool allowlist and per-turn request limits.
+  A clarification response ends its turn. A submitted date reply starts a new turn.
   Consider more analytical tools after the conversational behavior is verified.
 - Test direct replies without database reads, relative dates at calendar
   boundaries, clarification and context clearing, and distinct responses for
   empty windows, missing metrics, and unsupported analyses.
 
-This follow-up is design only. The current console still uses the one-tool
-behavior documented above.
+Implemented with the existing weekly tool. Chat uses a structured reply to
+distinguish general answers, clarification, and unavailable analysis when
+the model does not call the tool. Local date checks reject tool dates that
+do not match the user's explicit dates or the resolved range.
+
+The Windows venv suite passed all 89 tests with
+`.\.venv\Scripts\python.exe -m pytest -q --basetemp data/pytest-conversation-review`.
+The tests used a fake API client. Live model compatibility and reply quality
+remain unverified.
 
 ## Initialization verification
 

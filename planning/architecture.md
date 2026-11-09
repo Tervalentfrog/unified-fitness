@@ -254,9 +254,9 @@ Tests use fake API responses; live API calls are explicit and optional.
 See the [one-tool console plan](implementation-plan.md#next-slice-one-tool-ai-console)
 for the request budget, aggregate validation, and acceptance tests.
 
-### Planned conversational console
+### Conversational console
 
-The current console handles each question independently and replaces model
+The first console handled each question independently and replaced model
 replies without a tool call with a fixed scope and date prompt. That guard
 prevents unsupported claims about recorded training, but also suppresses
 ordinary answers and useful clarifying questions.

@@ -1,5 +1,6 @@
 import json
 import sys
+from datetime import date, datetime
 from types import SimpleNamespace
 
 import pytest
@@ -12,6 +13,7 @@ from unified_fitness.ingestion import strava
 
 
 DATES = '{"start":"2024-01-01","end":"2024-03-01"}'
+DATED_QUESTION = "What was recorded from 2024-01-01 through 2024-03-01?"
 
 
 def tool_call(arguments=DATES, name="get_weekly_summary", call_id="call_123"):
@@ -21,6 +23,10 @@ def tool_call(arguments=DATES, name="get_weekly_summary", call_id="call_123"):
 
 def response(*items, text="", status="completed"):
     return SimpleNamespace(output=items, output_text=text, status=status)
+
+
+def reply(kind, message):
+    return response(text=json.dumps({"kind": kind, "message": message}))
 
 
 class FakeClient:
@@ -133,7 +139,7 @@ def test_invalid_provider_responses_stop_before_read(result, message, monkeypatc
 def test_second_response_cannot_trigger_more_requests(fitness_path, capsys, result, message):
     client = FakeClient(response(tool_call()), result)
     with pytest.raises(FitnessError, match=message):
-        llm.answer(client, "model", fitness_path, "question")
+        llm.answer(client, "model", fitness_path, DATED_QUESTION)
     assert len(client.requests) == 2
     displayed = capsys.readouterr().out
     assert "Deterministic evidence" in displayed
@@ -141,16 +147,89 @@ def test_second_response_cannot_trigger_more_requests(fitness_path, capsys, resu
 
 
 def test_no_tool_and_empty_range(fitness_path, capsys):
-    client = FakeClient(response(text="You ran 99 times."), response(
+    client = FakeClient(reply("unavailable", "Exercise loads are unavailable in the weekly report."), response(
         tool_call(DATES.replace("2024", "2025"))))
     llm.answer(client, "model", fitness_path, "first question")
-    assert "include the start and end dates" in capsys.readouterr().out
-    llm.answer(client, "model", fitness_path, "second question")
+    assert "Exercise loads are unavailable" in capsys.readouterr().out
+    empty_question = DATED_QUESTION.replace("2024", "2025")
+    llm.answer(client, "model", fitness_path, empty_question)
     assert "No stored training records" in capsys.readouterr().out
     assert [request["input"] for request in client.requests] == [
         [{"role": "user", "content": "first question"}],
-        [{"role": "user", "content": "second question"}],
+        [{"role": "user", "content": empty_question}],
     ]
+
+
+@pytest.mark.parametrize("question,expected", [
+    ("last week", ("2024-12-30", "2025-01-05")),
+    ("this week", ("2025-01-06", "2025-01-06")),
+    ("last month", ("2024-12-01", "2024-12-31")),
+    ("this month", ("2025-01-01", "2025-01-06")),
+    ("yesterday", ("2025-01-05", "2025-01-05")),
+    ("today", ("2025-01-06", "2025-01-06")),
+    ("last week versus this week", None),
+    ("How many runs since last week?", None),
+])
+def test_relative_periods(question, expected):
+    assert llm.relative_dates(question, date(2025, 1, 6)) == expected
+
+
+def test_clarification_reuses_only_pending_question(fitness_path, capsys, monkeypatch):
+    class Clock:
+        @staticmethod
+        def now(zone):
+            assert zone.key == "Asia/Singapore"
+            return datetime(2024, 3, 4, tzinfo=zone)
+
+    monkeypatch.setattr(llm, "datetime", Clock)
+    client = FakeClient(
+        reply("clarification", "What period should I look at?"),
+        response(tool_call('{"start":"2024-02-26","end":"2024-03-03"}')),
+        response(text="The report shows one run."),
+        reply("answer", "A kilometer is 1,000 meters."),
+    )
+    original = "How many runs did I record?"
+    pending = llm.answer(client, "model", fitness_path, original)
+    assert pending == original
+    assert "What period should I look at?" in capsys.readouterr().out
+    pending = llm.answer(client, "model", fitness_path, "Last week.", pending=pending)
+    assert pending is None
+    assert "2024-02-26 through 2024-03-03" in client.requests[1]["instructions"]
+    assert [item["content"] for item in client.requests[1]["input"]] == [original, "Last week."]
+    assert json.loads(client.requests[2]["input"][-1]["output"])["weeks"][0]["running"]["runs"] == 1
+    assert "Deterministic evidence" in capsys.readouterr().out
+    monkeypatch.setattr(llm, "weekly_summary", lambda *_: pytest.fail("Unexpected database read"))
+    llm.answer(client, "model", fitness_path, "What is a kilometer?", pending=original)
+    assert client.requests[3]["input"] == [{"role": "user", "content": "What is a kilometer?"}]
+    assert "1,000 meters" in capsys.readouterr().out
+
+
+def test_relative_call_cannot_change_resolved_range(monkeypatch):
+    monkeypatch.setattr(llm, "weekly_summary", lambda *_: pytest.fail("Unexpected database read"))
+    client = FakeClient(response(tool_call()))
+    with pytest.raises(FitnessError, match="outside the resolved reporting range"):
+        llm.answer(client, "model", None, "How many runs today?")
+    assert len(client.requests) == 1
+
+
+@pytest.mark.parametrize("question", [
+    "How many runs did I record?",
+    "What was recorded from 2024-03-01 through 2024-01-01?",
+    "How many runs since last week?",
+])
+def test_model_cannot_supply_unrequested_dates(monkeypatch, capsys, question):
+    monkeypatch.setattr(llm, "weekly_summary", lambda *_: pytest.fail("Unexpected database read"))
+    client = FakeClient(response(tool_call()))
+    assert llm.answer(client, "model", None, question) == question
+    assert "Which date range" in capsys.readouterr().out
+    assert len(client.requests) == 1
+
+
+def test_unstructured_reply_is_not_displayed(capsys):
+    client = FakeClient(response(text="You ran 99 times."))
+    with pytest.raises(FitnessError, match="no usable reply"):
+        llm.answer(client, "model", None, "How many runs?")
+    assert "99" not in capsys.readouterr().out
 
 
 def test_result_boundary(fitness_path, monkeypatch):
@@ -160,10 +239,10 @@ def test_result_boundary(fitness_path, monkeypatch):
     assert client.requests == []
     monkeypatch.setattr(llm, "MAX_RESULT_BYTES", 1)
     with pytest.raises(FitnessError, match="too large"):
-        llm.answer(client, "model", fitness_path, "question")
+        llm.answer(client, "model", fitness_path, DATED_QUESTION)
     monkeypatch.setattr(llm, "weekly_summary", lambda *_: {"metric": float("inf")})
     with pytest.raises(FitnessError, match="unrepresentable"):
-        llm.answer(client, "model", fitness_path, "question")
+        llm.answer(client, "model", fitness_path, DATED_QUESTION)
     assert all(len(request["input"]) == 1 for request in client.requests)
 
 
@@ -201,7 +280,7 @@ def test_chat_errors_and_disclosure(monkeypatch, capsys, tmp_path):
     ))
     monkeypatch.setenv("OPENAI_API_KEY", "invented-key")
     monkeypatch.setenv("OPENAI_MODEL", "invented-model")
-    questions = iter(["first", "second", "third", "fourth", "fifth"])
+    questions = iter(["first", "second", "third", "fourth", DATED_QUESTION])
     observed = []
 
     def read_question(_):
@@ -218,7 +297,7 @@ def test_chat_errors_and_disclosure(monkeypatch, capsys, tmp_path):
     assert main(["--db", str(tmp_path / "private-path.db"), "chat"]) == 0
     assert "remote processing" in observed[0]
     assert [request["input"][0]["content"] for request in client.requests] == [
-        "first", "second", "third", "fourth", "fifth",
+        "first", "second", "third", "fourth", DATED_QUESTION,
     ]
     for message, output in zip(("timed out", "quota limit", "authentication failed",
                                 "request failed", "Cannot read"), observed[1:], strict=True):
@@ -254,7 +333,7 @@ def test_chat_loads_dotenv_with_process_precedence(tmp_path, monkeypatch, capsys
         '# Example\nOPENAI_API_KEY = "invented-key"\nOPENAI_MODEL=file-model\n'
         'UNIFIED_FITNESS_DB=ignored.db\n', encoding="utf-8-sig",
     )
-    client = FakeClient(response())
+    client = FakeClient(reply("answer", "A general reply."))
 
     def create_client(**kwargs):
         assert kwargs["api_key"] == "invented-key"

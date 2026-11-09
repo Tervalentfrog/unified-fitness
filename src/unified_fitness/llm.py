@@ -2,10 +2,13 @@
 
 import json
 import os
+import re
 import sqlite3
+from datetime import datetime, timedelta
 from pathlib import Path
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from .analytics import report_dates, weekly_summary
+from .analytics import monday, report_dates, weekly_summary
 from .db import FitnessError
 
 MAX_QUESTION_CHARS = 2000
@@ -26,19 +29,48 @@ TOOL = {
     },
 }
 INSTRUCTIONS = (
-    "Answer only questions about recorded weekly strength and running totals. "
-    "Use get_weekly_summary for evidence, only when both dates are unambiguous. "
-    "Each question is independent. Do not guess dates or provide coaching. "
-    "Use only the supplied evidence for numerical claims. Explain relevant missing metrics "
-    "and coverage. Null means unavailable. Missing records do not establish inactivity."
+    "Answer general questions directly. Never make claims about the user's recorded training "
+    "without get_weekly_summary evidence. If the question needs a date range and it is unclear, "
+    "ask one focused clarification; do not guess dates. Use locally resolved dates when supplied, "
+    "otherwise require both dates in YYYY-MM-DD form in the user's input. "
+    "If the available tool cannot answer the question, explain the specific limitation. "
+    "Use only the supplied evidence for claims about recorded training. Explain relevant missing "
+    "metrics and coverage. Null means unavailable. Missing records do not establish inactivity."
 )
+REPLY_FORMAT = {
+    "type": "json_schema",
+    "name": "chat_reply",
+    "strict": True,
+    "schema": {
+        "type": "object",
+        "properties": {
+            "kind": {"type": "string", "enum": ["answer", "clarification", "unavailable"]},
+            "message": {"type": "string"},
+        },
+        "required": ["kind", "message"],
+        "additionalProperties": False,
+    },
+}
+RELATIVE_PERIOD = r"\b(?:today|yesterday|(?:this|last) (?:week|month))\b"
+ISO_DATE = r"\b\d{4}-\d{2}-\d{2}\b"
+DATE_REPLY = rf"(?:{RELATIVE_PERIOD}|\d{{4}}-\d{{2}}-\d{{2}}\s+(?:to|through)\s+\d{{4}}-\d{{2}}-\d{{2}})[.!]?"
 
 
-def request(client, model, items, *, allow_tool):
+def request(client, model, items, *, allow_tool, resolved=None):
+    instructions = INSTRUCTIONS
+    options = {}
+    if allow_tool:
+        options["text"] = {"format": REPLY_FORMAT}
+        instructions += (
+            " If no tool is called, classify the reply as answer for general information, "
+            "clarification for a missing date range, or unavailable for unsupported analysis."
+        )
+    if resolved:
+        instructions += f" The locally resolved reporting range is {resolved[0]} through {resolved[1]}."
     response = client.responses.create(
-        model=model, input=items, instructions=INSTRUCTIONS, tools=[TOOL],
+        model=model, input=items, instructions=instructions, tools=[TOOL],
         tool_choice="auto" if allow_tool else "none", parallel_tool_calls=False,
-        max_output_tokens=1024, store=False, include=["reasoning.encrypted_content"],
+        max_output_tokens=1024, store=False, include=["reasoning.encrypted_content"], **options,
     )
     if response.status != "completed":
         raise FitnessError("OpenAI did not complete the response.")
@@ -70,22 +102,82 @@ def tool_dates(arguments):
     return start, end
 
 
-def answer(client, model, path, question):
+def relative_dates(question, today):
+    question = question.lower()
+    periods = re.findall(RELATIVE_PERIOD, question)
+    # These modifiers can turn a calendar period into a range endpoint.
+    endpoint = rf"\b(?:since|before|after|until|through|to|from|between)\s+{RELATIVE_PERIOD}"
+    if len(periods) != 1 or re.search(ISO_DATE, question) or re.search(endpoint, question):
+        return None
+    period = periods[0]
+    if period == "today":
+        start = end = today
+    elif period == "yesterday":
+        start = end = today - timedelta(days=1)
+    elif period == "this week":
+        start, end = monday(today), today
+    elif period == "last week":
+        end = monday(today) - timedelta(days=1)
+        start = monday(end)
+    elif period == "this month":
+        start, end = today.replace(day=1), today
+    else:
+        end = today.replace(day=1) - timedelta(days=1)
+        start = end.replace(day=1)
+    return start.isoformat(), end.isoformat()
+
+
+def direct_reply(response):
+    try:
+        reply = json.loads(response.output_text, object_pairs_hook=unique_fields)
+        if (not isinstance(reply, dict) or reply.keys() != {"kind", "message"}
+                or reply["kind"] not in ("answer", "clarification", "unavailable")
+                or not isinstance(reply["message"], str) or not reply["message"].strip()):
+            raise ValueError
+    except ValueError:
+        raise FitnessError("OpenAI returned no usable reply.") from None
+    print("General reply (no training evidence)" if reply["kind"] == "answer" else "Chat reply")
+    print(reply["message"])
+    return reply["kind"] == "clarification"
+
+
+def answer(client, model, path, question, *, pending=None):
     if len(question) > MAX_QUESTION_CHARS:
         raise FitnessError(f"Keep questions to {MAX_QUESTION_CHARS} characters.")
-    user_item = {"role": "user", "content": question}
-    first = request(client, model, [user_item], allow_tool=True)
+    items = [{"role": "user", "content": question}]
+    if pending and re.fullmatch(DATE_REPLY, question, re.IGNORECASE):
+        items.insert(0, {"role": "user", "content": pending})
+    else:
+        pending = None
+    resolved = None
+    has_relative_period = re.search(RELATIVE_PERIOD, question, re.IGNORECASE)
+    if has_relative_period:
+        try:
+            today = datetime.now(ZoneInfo("Asia/Singapore")).date()
+        except ZoneInfoNotFoundError:
+            raise FitnessError("Install Asia/Singapore timezone data to use relative dates.") from None
+        resolved = relative_dates(question, today)
+    first = request(client, model, items, allow_tool=True, resolved=resolved)
     calls = [item for item in first.output if item.type == "function_call"]
     if not calls:
-        # A free-text response without evidence could contain invented training data.
-        print("Ask about recorded weekly training and include the start and end dates in your question.")
-        return
+        return (pending or question) if direct_reply(first) else None
     if len(calls) != 1:
         raise FitnessError("OpenAI requested more than one tool call.")
     call = calls[0]
     if call.name != TOOL["name"] or not call.call_id:
         raise FitnessError("OpenAI requested an invalid tool call.")
     start, end = tool_dates(call.arguments)
+    if resolved and (start, end) != resolved:
+        raise FitnessError("OpenAI requested dates outside the resolved reporting range. Try explicit dates.")
+    if has_relative_period and resolved is None:
+        print("Which date range should I use? Give both dates as YYYY-MM-DD.")
+        return pending or question
+    if resolved is None:
+        supplied_dates = tuple(re.findall(ISO_DATE, question))
+        same_day = start == end and supplied_dates == (start,)
+        if supplied_dates != (start, end) and not same_day:
+            print("Which date range should I use? Give both dates as YYYY-MM-DD.")
+            return pending or question
     try:
         report = weekly_summary(path, start, end)
     except (FitnessError, sqlite3.Error, OSError, RuntimeError, ValueError):
@@ -106,7 +198,7 @@ def answer(client, model, path, question):
 
     # Preserve the provider's item order while dropping draft prose.
     continuation = [
-        user_item,
+        *items,
         *(item for item in first.output if item.type in {"reasoning", "function_call"}),
         {"type": "function_call_output", "call_id": call.call_id, "output": evidence},
     ]
@@ -156,14 +248,16 @@ def chat(path):
                        timeout=30.0, max_retries=0,
                        http_client=openai.DefaultHttpxClient(follow_redirects=False)) as client:
         print("Chat sends questions and relevant weekly aggregates to OpenAI for remote processing.")
-        print("Keep private details out of your questions. Type /quit to exit. Each question stands alone.")
+        print("Keep private details out of your questions. Type /quit to exit.")
+        pending = None
         while True:
             try:
                 question = input("You> ").strip()
                 if question.lower() in {"/quit", "quit"}:
                     return 0
                 if question:
-                    answer(client, model, path, question)
+                    previous, pending = pending, None
+                    pending = answer(client, model, path, question, pending=previous)
             except (EOFError, KeyboardInterrupt):
                 return 0
             except FitnessError as error:

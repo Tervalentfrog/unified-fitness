@@ -100,7 +100,7 @@ Install the optional SDK. Put `OPENAI_API_KEY` and `OPENAI_MODEL` in a local
 `.env` file in the directory where you launch chat. Use one UTF-8
 `NAME=value` line per setting. Existing process environment values take
 precedence, even when blank. Choose a Responses API model your account can
-use with function calling.
+use with function calling and Structured Outputs.
 
 ~~~powershell
 .\.venv\Scripts\python.exe -m pip install -e ".[ai]"
@@ -110,9 +110,13 @@ use with function calling.
 Chat uses `data/unified-fitness.sqlite3` by default. Pass `--db` before
 `chat` to select another database. Reporting uses Asia/Singapore.
 
-Ask a self-contained question such as “How many runs and strength sets were
-recorded each week from 2024-01-01 through 2024-01-28?” Include both dates
-in every question. Type `/quit` or send EOF to exit.
+Ask general questions directly or ask about recorded training, for example
+“How many runs did I record last week?” Chat resolves today, yesterday,
+this week, last week, this month, and last month in Asia/Singapore. Weeks
+start Monday. “This week” and “this month” run through today. For other
+ranges, supply both dates in YYYY-MM-DD form. If chat asks for a range,
+reply with a supported phrase or a range such as `2024-01-01 to 2024-01-28`.
+Type `/quit` or send EOF to exit.
 
 Chat sends the question and the read-only weekly report for the selected date
 range to OpenAI for remote processing. Keep private details out of questions.
@@ -122,13 +126,14 @@ Chat requests `store=false`. Provider retention depends on applicable data
 controls. [OpenAI API data controls](https://developers.openai.com/api/docs/guides/your-data)
 
 Chat displays deterministic evidence separately from model commentary and
-reports empty windows locally. Each question allows one successful tool call
+reports empty windows locally. Each submitted turn allows one successful tool call
 and up to two requests. The limits are 2,000 question characters, 32 KiB of
 serialized evidence, and 1,024 output tokens per request, with a 30-second
-SDK timeout, zero retries, and redirects disabled. Chat keeps no transcript or cross-question
-history. Imports and offline reports require neither the SDK nor credentials.
+SDK timeout, zero retries, and redirects disabled. Chat keeps only a pending
+question in memory for date clarification. It saves no transcript. Imports
+and offline reports require neither the SDK nor credentials.
 
-The Windows venv pytest suite passed all 72 tests with a fake API client and
+The Windows venv pytest suite passed all 89 tests with a fake API client and
 invented data. Installed CLI checks covered help, a synthetic weekly report,
 an invalid date range, and chat setup errors. Live SDK and model behavior
 remain unverified. See the [console verification](planning/implementation-plan.md#console-verification).
