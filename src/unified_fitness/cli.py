@@ -1,4 +1,4 @@
-"""Offline command-line entry point."""
+"""Command-line entry point."""
 
 import argparse
 import json
@@ -27,6 +27,7 @@ def main(argv=None):
     weekly = commands.add_parser("weekly-summary", help="report Monday-start training weeks")
     weekly.add_argument("--from", dest="start", required=True, help="inclusive YYYY-MM-DD start")
     weekly.add_argument("--to", dest="end", required=True, help="inclusive YYYY-MM-DD end")
+    commands.add_parser("chat", help="ask OpenAI about recorded weekly training")
     args = parser.parse_args(argv)
 
     try:
@@ -34,11 +35,15 @@ def main(argv=None):
             print(json.dumps(strength_summary(args.db), indent=2))
             return 0
         if args.command == "running-summary":
-            print(json.dumps(running_summary(args.db), indent=2))
+            print(json.dumps(running_summary(args.db), indent=2, allow_nan=False))
             return 0
         if args.command == "weekly-summary":
-            print(json.dumps(weekly_summary(args.db, args.start, args.end), indent=2))
+            print(json.dumps(weekly_summary(args.db, args.start, args.end), indent=2, allow_nan=False))
             return 0
+        if args.command == "chat":
+            from .llm import chat
+
+            return chat(args.db)
         if args.command == "import-strava":
             report = strava.import_file(args.activities, args.db)
         else:

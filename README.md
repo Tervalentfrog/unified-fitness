@@ -3,7 +3,7 @@
 A local-first, single-user application for importing FitNotes strength history and
 Strava running history into SQLite, then querying measured trends from a console.
 
-**Status:** FitNotes v22 and Strava imports, separate summaries, and a combined weekly report are implemented.
+**Status:** FitNotes v22 and Strava imports, offline summaries, and an optional one-tool AI console are implemented.
 
 ## Development setup
 
@@ -72,7 +72,8 @@ The running summary reports run count, distinct Singapore running days, known
 distance, moving and elapsed seconds, reported ascent, and moving pace in
 seconds per kilometer. Coverage counts show which runs contributed. Pace
 uses total moving time divided by corresponding distance for runs with both
-values positive. Empty metrics and unavailable pace are JSON null.
+values positive. Empty metrics, unrepresentable totals, and unavailable pace are
+JSON null. Coverage counts still reflect records with the relevant inputs.
 
 See the [Strava source contract and verification](planning/strava-discovery.md)
 for the CSV layout, timezone policy, and repeat-import results.
@@ -93,21 +94,46 @@ Each week includes separate strength and running totals with coverage counts.
 Unknown metrics are null. The report reads both sources in one snapshot and
 can read a v1 database as strength-only.
 
-## Configuration and privacy
+## Ask about weekly training
 
-`.env.example` documents proposed settings, not a working configuration loader.
-No API key is needed now. Later code will read process environment variables;
-copying the template to `.env` alone will not load it automatically.
+Install the optional SDK and set `OPENAI_API_KEY` and `OPENAI_MODEL` in the
+process environment. Choose a Responses API model your account can use with
+function calling. The application does not load `.env` files.
+
+~~~powershell
+.\.venv\Scripts\python.exe -m pip install -e ".[ai]"
+.\.venv\Scripts\unified-fitness.exe --db data/fitness.sqlite3 chat
+~~~
+
+Ask a self-contained question such as “How many runs and strength sets were
+recorded each week from 2024-01-01 through 2024-01-28?” Include both dates
+in every question. Type `/quit` or send EOF to exit.
+
+Chat sends the question and the read-only weekly report for the selected date
+range to OpenAI for remote processing. Keep private details out of questions.
+The report contains aggregate evidence and coverage. The database, its path,
+source IDs, exercise names, workout notes, and GPS tracks stay local.
+Chat requests `store=false`. Provider retention depends on applicable data
+controls. [OpenAI API data controls](https://developers.openai.com/api/docs/guides/your-data)
+
+Chat displays deterministic evidence separately from model commentary and
+reports empty windows locally. Each question allows one successful tool call
+and up to two requests. The limits are 2,000 question characters, 32 KiB of
+serialized evidence, and 1,024 output tokens per request, with a 30-second
+SDK timeout, zero retries, and redirects disabled. Chat keeps no transcript or cross-question
+history. Imports and offline reports require neither the SDK nor credentials.
+
+The Windows venv pytest suite passed all 72 tests with a fake API client and
+invented data. Installed CLI checks covered help, a synthetic weekly report,
+an invalid date range, and chat setup errors. Live SDK and model behavior
+remain unverified. See the [console verification](planning/implementation-plan.md#console-verification).
+
+## Local data and credentials
 
 Store private exports and databases under `data/`. Keep credentials, raw data,
 personal reports, and transcripts out of Git. Only synthetic test fixtures belong
 in `tests/fixtures/`. Review staged files before every commit: ignore rules are not
 a guarantee against secrets in arbitrary files.
-
-Local-first means storage and calculations remain local. Planned AI chat sends
-questions and selected aggregate tool results to OpenAI. Raw backups, GPS tracks,
-free-text workout notes, and the database itself will not be uploaded by the app.
-Chat will disclose the data flow before use; offline reports remain available.
 
 ## Layout and plans
 
@@ -116,7 +142,7 @@ planning/                 Architecture, milestones, and decisions
 src/unified_fitness/       FitNotes and Strava ingestion, storage, CLI and summaries
 tests/fixtures/            Guidance for future synthetic test data
 data/                     Ignored local personal data
-.env.example              Proposed environment settings
+.env.example              Environment settings reference
 .gitignore                Python, credentials, and personal data exclusions
 pyproject.toml            Packaging and pytest configuration
 README.md                 Setup and project status

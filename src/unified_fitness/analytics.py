@@ -2,6 +2,7 @@
 
 from contextlib import closing
 from datetime import date, timedelta
+from math import isfinite
 
 from . import db
 
@@ -49,7 +50,12 @@ def summarize_runs(rows):
                  if distance and moving]
     pace = None
     if pace_rows:
-        pace = sum(moving for _, moving in pace_rows) / (sum(distance for distance, _ in pace_rows) / 1000)
+        moving_total = sum(moving for _, moving in pace_rows)
+        kilometers = sum(distance for distance, _ in pace_rows) / 1000
+        # Tiny positive distances can round to zero in kilometers.
+        if kilometers > 0 and isfinite(kilometers) and isfinite(moving_total):
+            ratio = moving_total / kilometers
+            pace = ratio if isfinite(ratio) else None
     result = {
         "runs": len(rows),
         "recorded_running_days": len({row[0] for row in rows}),
@@ -58,7 +64,8 @@ def summarize_runs(rows):
     }
     for index, field in enumerate(("distance_m", "moving_time_s", "elapsed_time_s", "elevation_gain_m"), 1):
         known = [row[index] for row in rows if row[index] is not None]
-        result[field] = sum(known) if known else None
+        total = sum(known)
+        result[field] = total if known and isfinite(total) else None
         result[f"runs_with_{field}"] = len(known)
     return result
 

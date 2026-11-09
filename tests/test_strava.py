@@ -257,3 +257,24 @@ def test_weekly_empty_database_and_maximum_window(tmp_path):
     assert report["observed_dates"] == {"strength": None, "running": None}
     assert len(report["weeks"]) == 53
     assert all(week["recorded_training_days"] == 0 for week in report["weeks"])
+
+
+@pytest.mark.parametrize("distances,expected_total", [
+    (["5e-324"], 5e-324),
+    (["1e-310"], 1e-310),
+    (["1e308", "1e308"], None),
+])
+def test_unrepresentable_running_aggregates(tmp_path, distances, expected_total):
+    source, dest = tmp_path / "activities.csv", tmp_path / "fitness.db"
+    write_csv(source, [
+        row_with(id=str(index), distance=distance, elevation="1e308")
+        for index, distance in enumerate(distances, 1)
+    ])
+    assert strava.import_file(source, dest).counts["inserted"] == len(distances)
+    result = running_summary(dest)
+    assert result["distance_m"] == expected_total
+    assert result["elevation_gain_m"] == (1e308 if len(distances) == 1 else None)
+    assert result["moving_pace_s_per_km"] is None
+    assert result["runs_with_pace"] == result["runs_with_distance_m"] == len(distances)
+    assert weekly_summary(dest, "2024-03-01", "2024-03-01")["weeks"][0]["running"] == result
+    json.dumps(result, allow_nan=False)

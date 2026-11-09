@@ -1,7 +1,8 @@
 # Implementation plan
 
 Status: Both importers, SQLite v2, separate summaries, and the combined offline
-weekly report are implemented and verified. Next is a one-tool AI console.
+weekly report are implemented and verified. The one-tool AI console is
+implemented and verified with a fake client. Final MVP acceptance is pending.
 
 FitNotes discovery is documented in [fitnotes-discovery.md](fitnotes-discovery.md).
 Its schema and current records are inspected, but weight/unit encodings and ID
@@ -57,7 +58,8 @@ after validating that source. Do not invent a FitNotes schema to keep coding.
 | Complete | Separate offline summaries | Strength sets, reps and recorded days, plus running totals, moving pace and coverage. Existing CLI commands work without credentials. |
 | Partial | Normalized fitness history | FitNotes loads, units and order remain unknown. Strava support covers the inspected layout and exact Run rows. Cross-export ID stability remains unverified. |
 | Complete | Integrated weekly analytics | A bounded shared date window reports both sources and deduplicates recorded training days. |
-| Outstanding | Interactive AI console and final MVP acceptance | Add a bounded, read-only console after the shared report has a verified contract. Then verify the complete local workflow and privacy boundary. |
+| Implemented | Interactive AI console | The weekly tool, request limits, privacy boundary, and error handling passed synthetic verification. Live SDK and model behavior remain unverified. |
+| Outstanding | Final MVP acceptance | Review the complete local workflow and run a live smoke check only with separate authorization. |
 
 Reviewed baseline: 3404908. FitNotes passed its [milestone review](handoff.md#milestone-review).
 Strava passed [verification](strava-discovery.md#implementation-verification).
@@ -204,9 +206,33 @@ No new schema, source export, or timezone dependency is needed.
 
 Defer additional tools, streaming, conversation history, web or file access,
 agents, caching, dashboards, and coaching. Keep the existing ingestion and
-analytics limits. A fresh session is recommended at this boundary. Start
-from 3404908 plus these planning edits. The [fresh-session handover](ai-console-handoff.md)
-contains the ready-to-paste implementation brief.
+analytics limits. The [handover](ai-console-handoff.md) records the original
+implementation brief. Model access and response quality remain unverified.
+
+### Console verification
+
+- The Windows venv suite passed 72 tests with
+  `.\.venv\Scripts\python.exe -m pytest -q --basetemp .pytest-tmp-ai-full`.
+  An earlier sandboxed run stopped at the existing hard-link test because
+  Windows denied link creation. The full rerun outside the sandbox passed.
+  After review, the suite passed all 72 tests again with
+  `.\.venv\Scripts\python.exe -m pytest -q --basetemp data/pytest-ai-review`.
+- Synthetic fixtures verified offline/tool parity, read-only database access,
+  the call ID pair and outgoing payload, independent questions, invalid and
+  surplus calls, unavailable metrics, size limits, and bounded API errors.
+  Regression tests cover kilometer conversion underflow, nonfinite pace, and
+  aggregate overflow. Unrepresentable metrics are null and retain input counts.
+- The installed CLI returned 0 for `--help`, `chat --help`, and a valid
+  synthetic `weekly-summary`. A reversed range, missing chat configuration,
+  and a missing SDK each returned 1 with a bounded diagnostic. The installed
+  venv did not contain the optional SDK. No live API request was made.
+- Questions that produce no tool call get a local scope and date prompt.
+  Empty windows display deterministic evidence and end locally. For other
+  valid results, the second request replays the matching call and any
+  provider reasoning items in their original order with `store=false` and
+  tool use disabled. The SDK transport disables redirects and retries.
+  See [OpenAI function calling](https://developers.openai.com/api/docs/guides/function-calling)
+  and [API data controls](https://developers.openai.com/api/docs/guides/your-data).
 
 ## Initialization verification
 
