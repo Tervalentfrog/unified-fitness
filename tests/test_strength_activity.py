@@ -49,6 +49,9 @@ def test_exercise_comparison_counts_days_and_suppresses_incomplete_reps(database
         "repetitions": {"delta": None, "reason": "incomplete_repetitions"},
     }
     assert "load_metrics_unavailable" in report["limitations"]
+    assert current["load"]["max_load_kg"] is None
+    assert current["load"]["volume_kg_reps"] is None
+    assert current["load"]["estimated_1rm_kg"] is None
     assert database.read_bytes() == before
 
 
@@ -88,6 +91,9 @@ def strength_call(exercise, **extra):
 
 
 def test_chat_strength_evidence_matches_cli(database, monkeypatch, capsys):
+    with closing(db.connect(database, "rw")) as connection, connection:
+        connection.execute("UPDATE strength_sets SET load_kg = 60, load_kind = 'external' WHERE source_record_id = ?",
+                           ("private-2",))
     monkeypatch.setattr(analytics, "reporting_today", lambda: TODAY)
     monkeypatch.setattr(llm, "reporting_today", lambda: TODAY)
     exercise = "invented press"
@@ -104,6 +110,7 @@ def test_chat_strength_evidence_matches_cli(database, monkeypatch, capsys):
     output = second["input"][-1]
     assert output["call_id"] == "strength-1"
     assert json.loads(output["output"]) == offline
+    assert offline["periods"][0]["load"]["estimated_1rm_kg"] == 70
     assert all(private not in output["output"] for private in
                ("private-path", "private-1", "Invented Press", "Other Press"))
 
@@ -138,3 +145,46 @@ def test_ambiguous_exercise_ends_locally(database, monkeypatch, capsys):
     llm.answer(client, "model", database, "How many Invented Press sets have I recorded all time?")
     assert len(client.requests) == 1
     assert "Multiple exercises share that name" in capsys.readouterr().out
+
+
+def test_load_metrics_only_include_compatible_sets():
+    rows = [("2024-02-29", reps, load, kind) for reps, load, kind in [
+        (1, 100, "external"), (5, 90, "external"), (10, 70, "external"),
+        (11, 60, "external"), (5, 200, "assisted"), (5, 300, None),
+        (0, 400, "external"), (None, 500, "external"), (5, 0, "external"),
+        (5, float("inf"), "external"), (5, None, "external"),
+    ]]
+    result = analytics.strength_load_metrics(rows)["load"]
+    assert result == {"eligible_sets": 4, "estimate_sets": 2, "max_load_kg": 100,
+                      "volume_kg_reps": 1910, "volume_is_subtotal": True, "estimated_1rm_kg": 105}
+
+
+def test_load_comparison_requires_complete_coverage(database):
+    with closing(db.connect(database, "rw")) as connection, connection:
+        connection.execute("DELETE FROM strength_sets WHERE source_record_id IN ('private-3', 'private-4')")
+        connection.execute("""UPDATE strength_sets
+            SET load_kg = CASE WHEN source_record_id = 'private-1' THEN 60 ELSE 90 END,
+                load_kind = 'external' WHERE exercise_id = 1""")
+    report = analytics.strength_activity(database, exercise="Invented Press", today=TODAY)
+    changes = report["comparison"]["load_changes"]
+    assert changes["max_load_kg"] == {"delta": 30, "reason": None}
+    assert changes["volume_kg_reps"] == {"delta": -30, "reason": None}
+    assert changes["estimated_1rm_kg"]["delta"] == pytest.approx(29)
+    with closing(db.connect(database, "rw")) as connection, connection:
+        connection.execute("""INSERT INTO strength_sets
+            (source, source_record_id, exercise_id, performed_on, repetitions, last_import_id)
+            VALUES ('fitnotes', 'unmapped', 1, '2024-02-29', 5, 1)""")
+    report = analytics.strength_activity(database, exercise="Invented Press", today=TODAY)
+    assert report["periods"][1]["load"]["volume_kg_reps"] == 450
+    assert report["comparison"]["load_changes"]["volume_kg_reps"] == {
+        "delta": None, "reason": "incomplete_load_coverage",
+    }
+
+
+def test_load_overflow_is_unavailable():
+    result = analytics.strength_load_metrics([("2024-02-29", 10, 1.7e308, "external")])["load"]
+    assert result["max_load_kg"] == 1.7e308
+    assert result["volume_kg_reps"] is None
+    assert result["volume_is_subtotal"] is False
+    assert result["estimated_1rm_kg"] is None
+    json.dumps(result, allow_nan=False)

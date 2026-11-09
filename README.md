@@ -205,8 +205,15 @@ Strength activity uses the same period modes as running trends. It reports
 sets, known repetitions, and distinct recorded training dates. Reps are a
 subtotal when coverage is incomplete. In chat, try “How many sets of
 Barbell Bench Press did I record in 2024?” using the name in your own
-summary. These counts describe recorded activity. Load, weight-based volume,
-and estimated 1RM remain unavailable.
+summary. For one named exercise, the report can also summarize verified
+external loads in kilograms. It shows max recorded load, kg × reps volume,
+and an Epley estimate from sets of 2–10 reps. The estimate assumes an effort
+level that FitNotes does not record and should be treated as approximate.
+Volume is a subtotal when eligible set coverage is incomplete.
+
+The current FitNotes importer preserves raw weights and leaves normalized
+load fields empty. Load metrics therefore remain unavailable for existing
+imports pending [validation of the source encoding](planning/implementation-plan.md#load-based-strength-progression-slice).
 
 ## Local data and credentials
 

@@ -60,7 +60,8 @@ STRENGTH_TOOL = {
     "description": (
         "Read recorded strength sets, known repetitions, and distinct training dates, optionally "
         "for one exact exercise name from the question. Use null exercise only for overall strength. "
-        "Supports comparison, range, year, yearly, and all_time. No load, volume by weight, or estimated 1RM."
+        "Supports comparison, range, year, yearly, and all_time. For a named exercise only, "
+        "also returns maximum load, kg × reps, and estimated 1RM when verified external kg loads exist."
     ),
     "strict": True,
     "parameters": {
@@ -100,6 +101,9 @@ INSTRUCTIONS = (
     "In running comparisons use pace_direction and eligible distance bands; overall pace is descriptive. "
     "For exercise-specific strength questions use the exact exercise wording from the user. "
     "Strength sets, reps and recorded days do not establish strength gains or load-based volume. "
+    "Use only non-null load metrics and eligible load deltas. Label volume as a subtotal when "
+    "volume_is_subtotal is true. Explain missing coverage. "
+    "Estimated 1RM uses the Epley formula on 2–10 reps with unknown effort and is not a measured maximum. "
     "Use get_running_records for fastest moving pace or common run periods, asking which distance band "
     "(under 5 km, 5 to under 10 km, or 10 km or more) or pattern (weekday or time of day) if unclear. "
     "Explain that exact-distance finish times, splits, and seasonal patterns are unavailable. "

@@ -423,6 +423,39 @@ def strength_metrics(rows):
     }
 
 
+def strength_load_metrics(rows):
+    activity = strength_metrics([row[:2] for row in rows])
+    eligible = [(load, reps) for _, reps, load, kind in rows
+                if kind == "external" and isinstance(load, (int, float)) and isfinite(load)
+                and load > 0 and type(reps) is int and reps > 0]
+    volume = sum(load * reps for load, reps in eligible)
+    # Epley estimates use low-rep sets. A single belongs in the observed max.
+    estimates = [load * (1 + reps / 30) for load, reps in eligible if 2 <= reps <= 10]
+    best_estimate = max(estimates, default=None)
+    activity["load"] = {
+        "eligible_sets": len(eligible),
+        "estimate_sets": len(estimates),
+        "max_load_kg": max((load for load, _ in eligible), default=None),
+        "volume_kg_reps": volume if eligible and isfinite(volume) else None,
+        "volume_is_subtotal": bool(eligible) and len(eligible) < len(rows) and isfinite(volume),
+        "estimated_1rm_kg": best_estimate if best_estimate is not None and isfinite(best_estimate) else None,
+    }
+    return activity
+
+
+def strength_load_changes(baseline, current):
+    changes = {}
+    for metric in ("max_load_kg", "volume_kg_reps", "estimated_1rm_kg"):
+        before, after = baseline["load"][metric], current["load"][metric]
+        reason = None
+        if before is None or after is None:
+            reason = "unavailable_load_metric"
+        elif any(period["load"]["eligible_sets"] != period["sets"] for period in (baseline, current)):
+            reason = "incomplete_load_coverage"
+        changes[metric] = {"delta": None if reason else after - before, "reason": reason}
+    return changes
+
+
 def strength_activity(path, mode="comparison", start=None, end=None, year=None, exercise=None, *, today=None):
     if exercise is not None and (not isinstance(exercise, str) or not exercise.strip() or len(exercise) > 200):
         raise db.FitnessError("Supply a nonempty exercise name of at most 200 characters.")
@@ -432,7 +465,8 @@ def strength_activity(path, mode="comparison", start=None, end=None, year=None, 
     with closing(db.connect(path, "ro")) as connection, connection:
         connection.execute("BEGIN")
         db.check_schema(connection)
-        sql = "SELECT performed_on, repetitions FROM strength_sets WHERE performed_on BETWEEN ? AND ?"
+        columns = "performed_on, repetitions" if exercise is None else "performed_on, repetitions, load_kg, load_kind"
+        sql = f"SELECT {columns} FROM strength_sets WHERE performed_on BETWEEN ? AND ?"
         parameters = (baseline_start.isoformat(), last.isoformat())
         if exercise is not None:
             exercise = exercise.strip()
@@ -445,9 +479,13 @@ def strength_activity(path, mode="comparison", start=None, end=None, year=None, 
                 parameters += (matches[0],)
         rows = [] if status else connection.execute(sql + " ORDER BY performed_on, id", parameters).fetchall()
 
-    result = period_report(rows, mode, baseline_start, first, last, today, strength_metrics, status=status)
+    metrics = strength_metrics if exercise is None else strength_load_metrics
+    result = period_report(rows, mode, baseline_start, first, last, today, metrics, status=status)
     result["exercise"] = exercise
-    result["limitations"].append("load_metrics_unavailable")
+    if exercise is None or not any(period["load"]["eligible_sets"] for period in result["periods"]):
+        result["limitations"].append("load_metrics_unavailable")
+    elif any(period["load"]["estimated_1rm_kg"] is not None for period in result["periods"]):
+        result["limitations"].append("estimated_1rm_effort_unknown")
     if status is None and mode == "comparison":
         baseline, current = result["periods"]
         changes = {}
@@ -461,4 +499,6 @@ def strength_activity(path, mode="comparison", start=None, end=None, year=None, 
                 reason = "incomplete_repetitions"
             changes[metric] = {"delta": None if reason else current[metric] - baseline[metric], "reason": reason}
         result["comparison"] = {"changes": changes}
+        if exercise is not None:
+            result["comparison"]["load_changes"] = strength_load_changes(baseline, current)
     return result

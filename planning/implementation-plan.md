@@ -331,6 +331,51 @@ database and its hash was unchanged. The launcher emitted the existing
 Python path warning. Chat tests used a fake client. Live routing remains
 unverified.
 
+## Load-based strength progression slice
+
+The inspected FitNotes export contains only raw zero weights and cannot
+establish a decoder. Before enabling normalization, create a separate
+controlled FitNotes backup and record the app version, displayed load and
+unit, exercise, repetitions, and performed status for each test set. Include
+two distinct nonzero and fractional values in kg and lb, global settings and
+per-exercise overrides, and snapshots before and after changing units with
+and without conversion. Compare the displayed values and any FitNotes CSV
+export with the SQLite storage class, raw weight, exercise unit code, set
+unit code, and global setting. Include zero, bodyweight, assisted, and
+external-load examples and verify what happens to IDs and completion flags
+on edits. Validate whether load includes the implement and whether a value
+is per side, per implement, or total. Keep the original backup untouched.
+
+Only after the mapping is validated should the importer populate the existing
+normalized fields for supported rows. Preserve the raw values and record the
+mapping in import provenance. Unknown rows retain NULL. Test repeat and
+updated imports, and plan an explicit re-import of earlier backups where
+their semantics are established. No schema migration is needed.
+
+The report can be implemented and tested independently with invented
+normalized fixtures. Use one exact exercise and positive, finite kg loads
+classified as `external`. Return the maximum recorded load on a set with
+positive known reps, plus volume as the sum of kg × reps. Count contributing
+sets and mark volume as a subtotal when coverage is incomplete. Estimate the
+highest Epley value as kg × (1 + reps / 30) for 2–10 reps. This is an estimate
+from recorded sets with unknown effort, with no claim of measured 1RM.
+Keep single reps in max-load evidence. Treat the rep cutoff as an MVP policy.
+[Repetition maximum prediction study](https://pubmed.ncbi.nlm.nih.gov/16937972/)
+
+Return null when no eligible or finite value exists. Report load comparisons
+only when both periods have full eligible load coverage. An estimated 1RM
+delta additionally requires estimates in both periods. Keep the existing
+offline and chat entry points. Verify hand-calculated values, excluded load
+kinds, unknown weights and reps, rep cutoffs, overflow, comparison coverage,
+read-only access, and fake-client parity.
+
+Implemented report calculations and chat evidence for normalized loads.
+The Windows venv suite passed 141 tests with
+`.\.venv\Scripts\python.exe -m pytest -q --basetemp data/pytest-strength-load`.
+Tests used invented normalized rows and a fake client. The current local
+database had no nonzero raw weights or normalized load values. Source
+normalization is pending a controlled export. No live API calls were made.
+
 ## Initialization verification
 
 No existing files, Git metadata, or applicable parent `AGENTS.md` were found.

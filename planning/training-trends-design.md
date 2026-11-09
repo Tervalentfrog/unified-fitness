@@ -3,7 +3,7 @@
 Running trends and strength activity support yearly breakdowns and all-time
 totals. The running records slice is specified in
 [Running records and patterns](#running-records-and-patterns).
-Load-based progression remains deferred.
+Load reporting is implemented for verified normalized data. FitNotes normalization remains pending source validation.
 
 ## Source evidence
 
@@ -127,14 +127,19 @@ overall or exercise-specific training frequency by range or year. “Am I
 stronger at bench press?” can receive workload context and an explanation
 of why max load and estimated 1RM are unavailable.
 
-Future load analytics require controlled FitNotes exports to verify nonzero
+Load normalization requires controlled FitNotes exports to verify nonzero
 weights, unit overrides, weight scaling, compatible load kinds, and
 completion semantics. After validation, max recorded weight can compare
 like exercise and load kinds, with reps shown for context. Load volume
-would sum kg × reps only over compatible, verified external loads. Estimated
-1RM stays deferred until a formula, rep range, and applicability rules are
-reviewed. Raw weights, zero loads, bodyweight, and assistance must never be
+sums kg × reps only over compatible, verified external loads. The estimated
+1RM uses Epley for sets of 2–10 reps with unknown effort. Raw weights, zero
+loads, bodyweight, and assistance must never be
 silently treated as equivalent.
+
+The [load-based progression slice](implementation-plan.md#load-based-strength-progression-slice)
+defines the implemented report for verified external loads and the remaining
+FitNotes normalization gate. Existing imports still return unavailable load
+metrics.
 
 ## Overall questions and useful follow-ons
 
