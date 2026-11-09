@@ -3,7 +3,7 @@
 A local-first, single-user application for importing FitNotes strength history and
 Strava running history into SQLite, then querying measured trends from a console.
 
-**Status:** FitNotes v22 and Strava running imports and summaries are implemented.
+**Status:** FitNotes v22 and Strava imports, separate summaries, and a combined weekly report are implemented.
 
 ## Development setup
 
@@ -77,6 +77,22 @@ values positive. Empty metrics and unavailable pace are JSON null.
 See the [Strava source contract and verification](planning/strava-discovery.md)
 for the CSV layout, timezone policy, and repeat-import results.
 
+## Report weekly training
+
+Point the command at the database used for both imports.
+
+~~~powershell
+.\.venv\Scripts\unified-fitness.exe --db data/fitness.sqlite3 weekly-summary --from 2024-01-01 --to 2024-02-29
+~~~
+
+The date range is inclusive and limited to 366 days. The JSON report includes
+every Monday-start week intersecting that range, even weeks with no stored
+records. FitNotes dates stay as recorded and runs use Singapore reporting
+dates. A date with both sources counts as one combined training day.
+Each week includes separate strength and running totals with coverage counts.
+Unknown metrics are null. The report reads both sources in one snapshot and
+can read a v1 database as strength-only.
+
 ## Configuration and privacy
 
 `.env.example` documents proposed settings, not a working configuration loader.
@@ -110,7 +126,6 @@ README.md                 Setup and project status
 - [Prioritized implementation plan](planning/implementation-plan.md)
 - [Decisions, trade-offs, and open questions](planning/decisions.md)
 - [FitNotes discovery](planning/fitnotes-discovery.md)
-- [Implementation handoff](planning/handoff.md)
-- [Ready-to-paste next-session prompt](planning/next-session-prompt.md)
-
+- [FitNotes implementation handoff](planning/handoff.md)
+- [Historical FitNotes implementation prompt](planning/next-session-prompt.md)
 - [Strava discovery and verification](planning/strava-discovery.md)

@@ -7,7 +7,7 @@ from contextlib import closing
 import pytest
 
 from unified_fitness import db
-from unified_fitness.analytics import running_summary, strength_summary
+from unified_fitness.analytics import running_summary, strength_summary, weekly_summary
 from unified_fitness.cli import main
 from unified_fitness.ingestion import strava
 
@@ -171,3 +171,89 @@ def test_cli_and_weighted_pace_coverage(tmp_path, capsys):
     }
     with pytest.raises(db.FitnessError, match="different files"):
         strava.import_file(source, source)
+
+
+def test_weekly_summary_mixed_sources(tmp_path, capsys):
+    source, dest = tmp_path / "activities.csv", tmp_path / "fitness.db"
+    make_v1(dest)
+    with closing(sqlite3.connect(dest)) as connection, connection:
+        connection.executemany(
+            """INSERT INTO strength_sets
+               (source, source_record_id, exercise_id, performed_on, repetitions, last_import_id)
+               VALUES ('fitnotes', ?, 1, ?, ?, 1)""",
+            [
+                ("outside", "2023-12-29", 100),
+                ("sunday", "2023-12-31", 5),
+                ("same-day", "2024-01-01", 0),
+                ("unknown", "2024-01-01", None),
+                ("last-day", "2024-01-15", None),
+                ("after", "2024-01-16", 100),
+            ],
+        )
+    before = dest.read_bytes()
+    legacy = weekly_summary(dest, "2024-01-01", "2024-01-01")
+    assert legacy["weeks"][0]["strength"]["sets"] == 3
+    assert legacy["weeks"][0]["running"]["runs"] == 0
+    assert dest.read_bytes() == before
+    write_csv(source, [
+        row_with(date="Dec 31, 2023, 4:00:00 PM", distance="1000", moving="300"),
+        row_with(id="124", date="Jan 1, 2024, 3:00:00 PM", distance="2000", moving="660"),
+        row_with(id="125", date="Jan 2, 2024, 1:00:00 AM", distance="0", moving="300"),
+        row_with(id="126", date="Jan 2, 2024, 1:00:00 AM", distance="500", moving="", elevation=""),
+    ])
+    assert strava.import_file(source, dest).counts["inserted"] == 4
+    args = ["--db", str(dest), "weekly-summary", "--from", "2023-12-31", "--to", "2024-01-15"]
+    assert main(args) == 0
+    output = capsys.readouterr().out
+    assert main(args) == 0
+    assert capsys.readouterr().out == output
+    report = json.loads(output)
+    assert report["reporting_timezone"] == "Asia/Singapore"
+    assert (report["from"], report["to"]) == ("2023-12-31", "2024-01-15")
+    assert report["observed_dates"] == {
+        "strength": {"first": "2023-12-31", "last": "2024-01-15"},
+        "running": {"first": "2024-01-01", "last": "2024-01-02"},
+    }
+    sunday, mixed, empty, last = report["weeks"]
+    assert [week["week_start"] for week in report["weeks"]] == [
+        "2023-12-25", "2024-01-01", "2024-01-08", "2024-01-15",
+    ]
+    assert sunday["strength"]["repetitions"] == 5
+    assert mixed["recorded_training_days"] == 2
+    assert mixed["strength"] == {
+        "recorded_strength_days": 1, "sets": 3, "repetitions": 7, "sets_with_repetitions": 2,
+    }
+    assert mixed["running"] == running_summary(dest)
+    assert mixed["running"]["moving_pace_s_per_km"] == 320
+    assert mixed["running"]["runs_with_pace"] == 2
+    assert mixed["running"]["runs_with_moving_time_s"] == 3
+    assert mixed["running"]["runs_with_elevation_gain_m"] == 3
+    assert empty["recorded_training_days"] == 0
+    assert empty["running"]["distance_m"] is None
+    assert empty["strength"]["repetitions"] is None
+    assert last["strength"]["sets"] == 1
+    assert last["strength"]["repetitions"] is None
+    assert strength_summary(dest)["sets"] == 7
+
+
+@pytest.mark.parametrize("start,end", [
+    ("20240101", "2024-01-01"),
+    ("2024-02-30", "2024-03-01"),
+    ("2024-01-02", "2024-01-01"),
+    ("2024-01-01", "2025-01-01"),
+])
+def test_weekly_invalid_range(tmp_path, capsys, start, end):
+    dest = tmp_path / "missing.db"
+    assert main(["--db", str(dest), "weekly-summary", "--from", start, "--to", end]) == 1
+    assert capsys.readouterr().err.startswith("Error:")
+    assert not dest.exists()
+
+
+def test_weekly_empty_database_and_maximum_window(tmp_path):
+    source, dest = tmp_path / "activities.csv", tmp_path / "fitness.db"
+    write_csv(source, [])
+    strava.import_file(source, dest)
+    report = weekly_summary(dest, "2024-01-01", "2024-12-31")
+    assert report["observed_dates"] == {"strength": None, "running": None}
+    assert len(report["weeks"]) == 53
+    assert all(week["recorded_training_days"] == 0 for week in report["weeks"])

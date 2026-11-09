@@ -1,7 +1,8 @@
 # Architecture
 
-Status: FitNotes ingestion and reporting are implemented. Unverified source
-mappings remain validation gates.
+Status: FitNotes and Strava ingestion, separate summaries, and the combined
+[weekly report](implementation-plan.md#weekly-training-report) are implemented.
+SQLite v2 stores both sources.
 
 The first backup has now been inspected: see [FitNotes discovery](fitnotes-discovery.md).
 The target design keeps four tables, preserves source flags/type codes, and starts
@@ -50,13 +51,13 @@ It returns inserted, updated, unchanged, rejected, and unsupported counts along
 with bounded aggregate diagnostics and separate warnings. The adapter owns source
 mapping and coordinates the transaction. Persistence owns the SQL writes.
 
-## Target relational model
+## Relational model
 
 Internal primary keys are integers; source identifiers are TEXT to preserve their
 exact representation. `source` is a stable namespace (`fitnotes` or `strava`).
 Source fields below are canonical requirements, not claims about export columns.
 
-| Table | Planned columns and constraints |
+| Table | Columns and constraints |
 | --- | --- |
 | `imports` | `id` PK, `source`, `file_sha256`, `imported_at_utc`, `adapter_version`, `options_json`, outcome counts; one row per committed attempt |
 | `running_activities` | `id` PK, `source`, `source_record_id`, `activity_date`, nullable `started_at_raw`, `started_at_utc`, `timezone_name`, `distance_m`, `moving_time_s`, `elapsed_time_s`, `elevation_gain_m`; `last_import_id` FK; UNIQUE (`source`, `source_record_id`) |
@@ -69,9 +70,11 @@ Leave `source_load_unit`, `load_kg`, `load_kind`, and `set_order` NULL until the
 meaning is established. Store source schema version, relevant settings, and the
 explicit completion policy in the existing import `options_json`; no extra table.
 
-### First importer contract
+### Schema lifecycle and FitNotes contract
 
-Destination schema v1 checks the app-created table definitions and version.
+Write transactions create v2 or upgrade a valid v1 database by adding
+running_activities. The migration preserves the existing tables and rolls
+back with the import on failure. Read-only summaries accept both versions.
 The FitNotes adapter owns both connection lifecycles so validation and file
 collision checks precede destination writes. It accepts standalone exports
 without SQLite sidecars, opens them read-only, and checks the hash across the
@@ -80,8 +83,7 @@ are required, and malformed values reject the row. Diagnostics aggregate fixed
 reasons without exposing record IDs. Exercise-only changes update the shared
 exercise definition. Set counts and last-change provenance track set payloads.
 
-Implement only `imports`, `exercises`, and `strength_sets` now; add the running
-table with Strava. Support the inspected SQLite `user_version=22` and validate
+The FitNotes importer supports the inspected SQLite `user_version=22` and validates
 required tables/columns and actual stored values; do not copy all source tables.
 Source and destination must be different files, including aliases/hard links.
 Reject an incompatible source or destination schema before changing stored data.
@@ -212,9 +214,10 @@ with both a run and lifting counts once).
 
 ## Analytics and AI boundary
 
-The first FitNotes report provides per-exercise set/repetition totals and recorded
-training days. Add running summaries with Strava; defer load-based progression and
-volume until units and load semantics are validated. Date ranges use inclusive ISO
+The CLI offers separate all-time summaries and an inclusive date-bounded weekly
+report. The weekly report reads both sources in one snapshot and combines
+recorded dates without inferring sessions. Defer load-based progression and volume until units and load
+semantics are validated. Date ranges use inclusive ISO
 calendar dates; weeks start Monday (confirmed). Return range, units, observed source
 date ranges, sample counts, and counts
 of stored records missing/excluded from each calculation. Import-level rejection
