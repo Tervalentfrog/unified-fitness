@@ -1,7 +1,7 @@
 # Strava export discovery
 
 Inspected locally on 2026-11-09. This is a source contract proposal for one
-account export. The importer and database migration are pending review.
+account export. The implemented import contract and verification are recorded below.
 
 ## Inventory
 
@@ -89,13 +89,11 @@ raised ZoneInfoNotFoundError for Asia/Singapore. Ensure IANA zone data is
 available in the next milestone, for example via tzdata where the system
 database is absent. Fail clearly if unavailable.
 
-## Destination and importer proposal
+## Destination and importer
 
-The app currently has schema v1 with imports, exercises, and strength_sets.
-The planned running_activities table already has the fields needed here.
-Add it in an explicit transaction-safe v1-to-v2 migration, retaining existing
-FitNotes data and audit records. Update the schema validator and cover both
-fresh and migrated databases. No change to strength columns is needed.
+Schema v2 adds running_activities to the three v1 tables. Import transactions
+create v2 for new databases and upgrade valid v1 databases in place, preserving
+the FitNotes and audit rows. Read-only summaries also support v1 databases.
 
 Use UNIQUE (source, source_record_id) and last_import_id as a foreign key to
 imports. Reuse the current connection and import audit helpers. Keep CSV
@@ -124,7 +122,7 @@ semantics. [Strava bulk export and GPX documentation](https://support.strava.com
 
 Used the local Python venv with csv, Decimal, datetime, and ElementTree for
 aggregate inspection. The CSV SHA-256 matched before and after the read.
-No application code changed, so application tests were not rerun.
+Application tests were outside the discovery-only pass. Implementation tests are recorded below.
 
 Git status, the staged diff, and git ls-files showed no private exports,
 databases, or credentials staged or tracked. The only tracked data/ entry is
@@ -134,3 +132,28 @@ backup, nested export paths, SQLite artifacts, environment files, and key
 patterns. Synthetic CSV and TSV fixture paths remain eligible for tracking.
 Ignore rules protect ordinary Git adds. A forced add or sensitive content
 under an unrecognized name still requires staged-diff review.
+
+
+## Implementation verification
+
+- .\.venv\Scripts\python.exe -m pip install -e ".[dev]" installed the editable
+  package and tzdata on Windows. The system timezone database is used where
+  available.
+- .\.venv\Scripts\python.exe -m pytest passed 40 tests, including migration
+  rollback, quoted fields, duplicate headers and IDs, time and metric
+  validation, overlapping imports, optional ascent, and pace coverage.
+- The installed import-strava and running-summary commands verified the
+  actual CSV against a fresh ignored copy of the v1 FitNotes smoke database.
+  The first import inserted 270 runs. The repeat reported 270 unchanged.
+  Each counted 17 unsupported activities and zero rejected rows, so both
+  returned the documented exit code 3.
+- The database reached version 2. Existing FitNotes rows, provenance, audit
+  entries, and summary stayed identical. Running rows and summary stayed
+  identical on repeat. Distance, moving and elapsed seconds, and ascent
+  totals matched CSV aggregation. Integrity and foreign-key checks passed.
+  The source CSV SHA-256 stayed unchanged.
+- The importer recognizes the inspected header prefix through the detailed
+  Distance column, with optional Elevation Gain and unmapped trailing fields.
+  An absent elevation column preserves previously stored ascent. Explicit
+  blanks represent unknown values. The UTC interpretation is limited to this
+  validated layout and is recorded in audit metadata.

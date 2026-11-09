@@ -6,9 +6,9 @@ import sqlite3
 import sys
 from pathlib import Path
 
-from .analytics import strength_summary
+from .analytics import running_summary, strength_summary
 from .db import FitnessError
-from .ingestion.fitnotes import import_file
+from .ingestion import fitnotes, strava
 
 
 def main(argv=None):
@@ -21,13 +21,22 @@ def main(argv=None):
     importer.add_argument("--assume-performed", action="store_true",
                           help="assert that the backup's sets were performed")
     commands.add_parser("summary", help="report stored strength sets, repetitions and days")
+    strava_importer = commands.add_parser("import-strava", help="import runs from Strava activities.csv")
+    strava_importer.add_argument("activities", type=Path)
+    commands.add_parser("running-summary", help="report stored running totals and moving pace")
     args = parser.parse_args(argv)
 
     try:
         if args.command == "summary":
             print(json.dumps(strength_summary(args.db), indent=2))
             return 0
-        report = import_file(args.backup, args.db, assume_performed=args.assume_performed)
+        if args.command == "running-summary":
+            print(json.dumps(running_summary(args.db), indent=2))
+            return 0
+        if args.command == "import-strava":
+            report = strava.import_file(args.activities, args.db)
+        else:
+            report = fitnotes.import_file(args.backup, args.db, assume_performed=args.assume_performed)
     except FitnessError as error:
         print(f"Error: {error}", file=sys.stderr)
         return 1

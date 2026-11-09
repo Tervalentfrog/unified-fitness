@@ -3,7 +3,7 @@
 A local-first, single-user application for importing FitNotes strength history and
 Strava running history into SQLite, then querying measured trends from a console.
 
-**Status:** FitNotes v22 ingestion and offline strength summaries are implemented.
+**Status:** FitNotes v22 and Strava running imports and summaries are implemented.
 
 ## Development setup
 
@@ -16,7 +16,8 @@ py -m venv .venv
 ~~~
 
 On macOS/Linux, use `python3 -m venv .venv` and `.venv/bin/python`.
-The application uses the Python standard library and runs offline.
+Imports and summaries run offline. On Windows, the package installs tzdata
+for Singapore reporting dates. Other platforms can use system IANA timezone data.
 
 ## Import and summarize
 
@@ -51,6 +52,31 @@ The milestone review passed all 26 tests and verified two imports of the
 confirmed backup into a fresh database. See the [review results](planning/handoff.md#milestone-review)
 for the integrity, normalization, and repeat-import checks.
 
+## Import and summarize runs
+
+Use the extracted activities.csv from the validated Strava bulk-export layout.
+Replace the example CSV path below with the local path under data/.
+
+~~~powershell
+.\.venv\Scripts\unified-fitness.exe --db data/fitness.sqlite3 import-strava data/strava-export/activities.csv
+.\.venv\Scripts\unified-fitness.exe --db data/fitness.sqlite3 running-summary
+~~~
+
+A successful import transaction upgrades an existing v1 database to v2 and
+preserves its FitNotes data and audit history. The strength summary remains
+available as summary. The Strava importer accepts Run rows and counts other
+activity types as unsupported. Exit code 3 means the import committed with
+exclusions, including non-running activities.
+
+The running summary reports run count, distinct Singapore running days, known
+distance, moving and elapsed seconds, reported ascent, and moving pace in
+seconds per kilometer. Coverage counts show which runs contributed. Pace
+uses total moving time divided by corresponding distance for runs with both
+values positive. Empty metrics and unavailable pace are JSON null.
+
+See the [Strava source contract and verification](planning/strava-discovery.md)
+for the CSV layout, timezone policy, and repeat-import results.
+
 ## Configuration and privacy
 
 `.env.example` documents proposed settings, not a working configuration loader.
@@ -71,7 +97,7 @@ Chat will disclose the data flow before use; offline reports remain available.
 
 ```text
 planning/                 Architecture, milestones, and decisions
-src/unified_fitness/       FitNotes ingestion, storage, CLI and summaries
+src/unified_fitness/       FitNotes and Strava ingestion, storage, CLI and summaries
 tests/fixtures/            Guidance for future synthetic test data
 data/                     Ignored local personal data
 .env.example              Proposed environment settings
@@ -87,5 +113,4 @@ README.md                 Setup and project status
 - [Implementation handoff](planning/handoff.md)
 - [Ready-to-paste next-session prompt](planning/next-session-prompt.md)
 
-Strava discovery is documented in the [export analysis](planning/strava-discovery.md).
-The next implementation milestone is the running importer and summary.
+- [Strava discovery and verification](planning/strava-discovery.md)

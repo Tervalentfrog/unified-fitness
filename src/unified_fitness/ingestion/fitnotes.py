@@ -4,12 +4,11 @@ import hashlib
 import json
 import math
 import sqlite3
-from collections import Counter
 from contextlib import closing
-from dataclasses import dataclass, field
 from datetime import date
 
 from .. import db
+from .common import SIDECAR_SUFFIXES, ImportReport, check_destination
 
 SOURCE = "fitnotes"
 SOURCE_VERSION = 22
@@ -20,15 +19,6 @@ REQUIRED = {
         "duration_seconds", "unit", "is_complete", "is_pending_update",
     ),
 }
-OUTCOMES = ("inserted", "updated", "unchanged", "rejected", "unsupported")
-SIDECAR_SUFFIXES = ("-wal", "-shm", "-journal")
-
-
-@dataclass
-class ImportReport:
-    counts: dict[str, int] = field(default_factory=lambda: dict.fromkeys(OUTCOMES, 0))
-    diagnostics: Counter[str] = field(default_factory=Counter)
-    warnings: list[str] = field(default_factory=list)
 
 
 def nonnegative_integer(value):
@@ -138,15 +128,6 @@ def file_hash(path):
 def check_standalone(path):
     if any(path.with_name(path.name + suffix).exists() for suffix in SIDECAR_SUFFIXES):
         raise db.FitnessError("Use a standalone FitNotes export without SQLite sidecars.")
-
-
-def check_destination(source, destination):
-    # SQLite can write, truncate or remove destination sidecars during recovery.
-    writable_paths = [destination, *(
-        destination.with_name(destination.name + suffix) for suffix in SIDECAR_SUFFIXES
-    )]
-    if any(path == source or (path.exists() and source.samefile(path)) for path in writable_paths):
-        raise db.FitnessError("Source and destination must be different files, including SQLite sidecars.")
 
 
 def import_file(source_path, destination_path, *, assume_performed=False):

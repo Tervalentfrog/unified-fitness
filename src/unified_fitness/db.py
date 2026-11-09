@@ -3,8 +3,7 @@
 import sqlite3
 from datetime import datetime, timezone
 
-SCHEMA_VERSION = 1
-SCHEMA = (
+SCHEMA_V1 = (
     """CREATE TABLE imports (
         id INTEGER PRIMARY KEY,
         source TEXT NOT NULL,
@@ -46,6 +45,22 @@ SCHEMA = (
         UNIQUE (source, source_record_id)
     )""",
 )
+RUNNING_SCHEMA = """CREATE TABLE running_activities (
+        id INTEGER PRIMARY KEY,
+        source TEXT NOT NULL,
+        source_record_id TEXT NOT NULL,
+        activity_date TEXT NOT NULL,
+        started_at_raw TEXT,
+        started_at_utc TEXT,
+        timezone_name TEXT,
+        distance_m REAL CHECK (distance_m >= 0),
+        moving_time_s REAL CHECK (moving_time_s >= 0),
+        elapsed_time_s REAL CHECK (elapsed_time_s >= 0),
+        elevation_gain_m REAL CHECK (elevation_gain_m >= 0),
+        last_import_id INTEGER NOT NULL REFERENCES imports(id),
+        UNIQUE (source, source_record_id)
+    )"""
+SCHEMA_V2 = (*SCHEMA_V1, RUNNING_SCHEMA)
 
 
 class FitnessError(Exception):
@@ -67,11 +82,49 @@ def check_schema(connection, *, initialize=False):
         )
     }
     if version == 0 and not objects and initialize:
-        for statement in SCHEMA:
+        for statement in SCHEMA_V2:
             connection.execute(statement)
-        connection.execute("PRAGMA user_version = 1")
-    elif version != SCHEMA_VERSION or objects != set(SCHEMA):
+        connection.execute("PRAGMA user_version = 2")
+        return 2
+    if version == 1 and objects == set(SCHEMA_V1):
+        if initialize:
+            connection.execute(RUNNING_SCHEMA)
+            connection.execute("PRAGMA user_version = 2")
+            return 2
+        return 1
+    if version != 2 or objects != set(SCHEMA_V2):
         raise FitnessError("Incompatible destination schema. Use a Unified Fitness database or a new path.")
+    return 2
+
+
+def save_run(connection, source_id, values, import_id, *, has_elevation):
+    existing = connection.execute(
+        """SELECT activity_date, started_at_raw, started_at_utc, distance_m,
+                  moving_time_s, elapsed_time_s, elevation_gain_m
+           FROM running_activities WHERE source = 'strava' AND source_record_id = ?""",
+        (source_id,),
+    ).fetchone()
+    if existing is None:
+        connection.execute(
+            """INSERT INTO running_activities
+               (source, source_record_id, activity_date, started_at_raw, started_at_utc,
+                distance_m, moving_time_s, elapsed_time_s, elevation_gain_m, last_import_id)
+               VALUES ('strava', ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (source_id, *values, import_id),
+        )
+        return "inserted"
+    if not has_elevation:
+        values = (*values[:-1], existing[-1])
+    if existing == values:
+        return "unchanged"
+    connection.execute(
+        """UPDATE running_activities SET activity_date = ?, started_at_raw = ?,
+           started_at_utc = ?, distance_m = ?, moving_time_s = ?, elapsed_time_s = ?,
+           elevation_gain_m = ?, last_import_id = ?
+           WHERE source = 'strava' AND source_record_id = ?""",
+        (*values, import_id, source_id),
+    )
+    return "updated"
 
 
 def start_import(connection, source, file_hash, adapter_version, options_json):
