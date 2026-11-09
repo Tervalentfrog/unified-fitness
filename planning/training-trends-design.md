@@ -1,8 +1,9 @@
 # Training trends design
 
 Running trends and strength activity support yearly breakdowns and all-time
-totals. Load-based progression, running records, and start-time patterns
-remain deferred.
+totals. The running records slice is specified in
+[Running records and patterns](#running-records-and-patterns).
+Load-based progression remains deferred.
 
 ## Source evidence
 
@@ -143,23 +144,37 @@ by year” to running `yearly`. “How has my running changed?” defaults to
 Clarify broad requests that need both sources over multiple years. The MVP
 can answer one source at a time while preserving one tool call per turn.
 
-Two small follow-ons are viable from stored Strava fields. Keep them
-outside the first trends slice:
+## Running records and patterns
 
-- **Fastest recorded run.** Ask whether the user means fastest average
-  moving pace or shortest finish time at a specified distance. For the
-  first, require a distance band or an explicitly agreed minimum distance
-  to avoid crowning very short efforts. Use eligible positive distance and
-  moving time, report the metric and ties, and distinguish a whole-run
-  average from a split or race result. Exact-distance splits require data
-  beyond the current schema. A later local record view can show identifying
-  details. Any chat result should carry only the necessary computed result.
-- **Most common running period.** Clarify whether the user means time of
-  day, weekday, or season. For a time-of-day histogram, convert known UTC
-  starts to Asia/Singapore and count fixed buckets with documented boundaries.
-  Report all modal ties and timestamp coverage. Weekday can use stored
-  reporting dates. Time-of-day buckets describe Singapore clock time,
-  including for travel runs. No inference from date-only rows.
+Add one read-only `get_running_records` tool and an offline
+`running-records` command. Use a strict schema with `metric` set to
+`fastest_pace`, `weekday`, or `time_of_day`, plus the existing
+`mode`, `start`, `end`, and `year` fields. Support `all_time` (default
+when no period is given), `year`, and `range`. Reuse the Singapore date
+policy and inclusive range validation. Reject irrelevant arguments.
+
+- **Fastest recorded run.** Define this as fastest whole-run average
+  moving pace. Require `distance_band` to be one of `under_5_km`,
+  `5_to_under_10_km`, or `10_km_or_more`. Chat asks for the band if
+  omitted. Use the existing positive finite pace eligibility rules.
+  Return seconds per kilometer, the count of equally fast runs at the
+  computed precision, band count, and eligible count. Exclude individual
+  dates, exact distances, and activity IDs from the result. Finish-time
+  rankings at a specific distance and exact splits are deferred.
+- **Most common running period.** Ask whether the user means weekday
+  or time of day. Weekday counts runs using stored Singapore reporting
+  dates. Time of day uses stored UTC starts converted to Singapore,
+  with half-open bands 00:00–06:00, 06:00–12:00, 12:00–18:00, and
+  18:00–24:00. Travel runs are counted in Singapore clock time.
+  Return bucket counts, all modal ties, and coverage. Skip missing or
+  invalid UTC starts. Date-only records remain eligible for weekday
+  counts. Seasonal patterns are deferred. Set `distance_band` to null.
+
+Results identify the metric, date scope, total runs, coverage, and
+whether evidence was empty, unavailable, or usable. Keep the existing
+one-tool and two-request turn limits. The report needs no schema change.
+Test band boundaries, ties, missing metrics, UTC rollover, bucket edges,
+invalid scope, offline parity, and aggregate-only provider payloads.
 
 ## Implementation and acceptance
 

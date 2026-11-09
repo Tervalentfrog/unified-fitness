@@ -10,6 +10,15 @@ from . import db
 REPORTING_ZONE = "Asia/Singapore"
 PERIOD_MODES = ("comparison", "range", "year", "yearly", "all_time")
 RUN_COLUMNS = "activity_date, distance_m, moving_time_s, elapsed_time_s, elevation_gain_m"
+DISTANCE_BANDS = {
+    "under_5_km": (0, 5000),
+    "5_to_under_10_km": (5000, 10000),
+    "10_km_or_more": (10000, float("inf")),
+}
+RECORD_METRICS = ("fastest_pace", "weekday", "time_of_day")
+RECORD_MODES = ("all_time", "year", "range")
+WEEKDAYS = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
+TIME_BUCKETS = ("00:00–06:00", "06:00–12:00", "12:00–18:00", "18:00–24:00")
 
 
 def strength_summary(path):
@@ -50,17 +59,25 @@ def running_summary(path):
     return summarize_runs(rows)
 
 
+def moving_pace(distance, seconds):
+    kilometers = distance / 1000
+    # Tiny positive distances can round to zero in kilometers.
+    if kilometers > 0 and isfinite(distance) and isfinite(seconds):
+        pace = seconds / kilometers
+        if pace > 0 and isfinite(pace):
+            return pace
+    return None
+
+
 def pace_metrics(rows):
     eligible = [(distance, moving) for _, distance, moving, _, _ in rows
                 if distance and moving and distance > 0 and moving > 0
                 and isfinite(distance) and isfinite(moving)]
     distance = sum(distance for distance, _ in eligible)
     seconds = sum(moving for _, moving in eligible)
-    kilometers = distance / 1000
-    # Weight by distance. Tiny positive distances can round to zero in kilometers.
-    pace = seconds / kilometers if kilometers > 0 and isfinite(distance) and isfinite(seconds) else None
     return {
-        "moving_pace_s_per_km": pace if pace is not None and pace > 0 and isfinite(pace) else None,
+        # Divide totals to weight pace by distance.
+        "moving_pace_s_per_km": moving_pace(distance, seconds),
         "runs_with_pace": len(eligible),
         "pace_distance_m": distance if eligible and isfinite(distance) else None,
     }
@@ -105,11 +122,12 @@ def observed_bounds(rows):
     return {"first": rows[0][0], "last": rows[-1][0]} if rows else None
 
 
-def read_runs(connection, version, start, end):
+def read_runs(connection, version, start, end, *, include_start=False):
     if version == 1:
         return []
+    columns = RUN_COLUMNS + (", started_at_utc" if include_start else "")
     return connection.execute(
-        f"""SELECT {RUN_COLUMNS} FROM running_activities WHERE activity_date BETWEEN ? AND ?
+        f"""SELECT {columns} FROM running_activities WHERE activity_date BETWEEN ? AND ?
             ORDER BY activity_date, source, source_record_id""",
         (start.isoformat(), end.isoformat()),
     ).fetchall()
@@ -218,8 +236,7 @@ def running_comparison(baseline, current, baseline_rows, current_rows):
 
     bands = []
     directions = set()
-    for label, lower, upper in (("under_5_km", 0, 5000), ("5_to_under_10_km", 5000, 10000),
-                                ("10_km_or_more", 10000, float("inf"))):
+    for label, (lower, upper) in DISTANCE_BANDS.items():
         before, after = (
             pace_metrics(row for row in rows if row[1] is not None and lower <= row[1] < upper)
             for rows in (baseline_rows, current_rows)
@@ -255,6 +272,79 @@ def running_trends(path, mode="comparison", start=None, end=None, year=None, *, 
             rows_between(rows, first, last),
         )
     return result
+
+
+def validate_record_options(metric, mode, distance_band):
+    if metric not in RECORD_METRICS or mode not in RECORD_MODES:
+        raise db.FitnessError("Choose a running record metric and an all-time, year, or date-range scope.")
+    if metric == "fastest_pace":
+        if not isinstance(distance_band, str) or distance_band not in DISTANCE_BANDS:
+            raise db.FitnessError("Choose a distance band: under 5 km, 5 to under 10 km, or 10 km or more.")
+    elif distance_band is not None:
+        raise db.FitnessError("Use a distance band only for fastest moving pace.")
+
+
+def fastest_pace(rows, distance_band):
+    lower, upper = DISTANCE_BANDS[distance_band]
+    in_band = [row for row in rows if row[1] is not None and 0 < row[1] and lower <= row[1] < upper]
+    paces = [moving_pace(distance, moving) for _, distance, moving, _, _ in in_band
+             if moving is not None and moving > 0]
+    eligible = [pace for pace in paces if pace is not None]
+    best = min(eligible, default=None)
+    return {
+        "runs_in_band": len(in_band),
+        "eligible_runs": len(eligible),
+        "fastest_moving_pace_s_per_km": best,
+        "tied_runs": eligible.count(best),
+    }
+
+
+def running_histogram(rows, metric):
+    labels = WEEKDAYS if metric == "weekday" else TIME_BUCKETS
+    counts = dict.fromkeys(labels, 0)
+    if metric == "time_of_day":
+        try:
+            zone = ZoneInfo(REPORTING_ZONE)
+        except ZoneInfoNotFoundError:
+            raise db.FitnessError("Install Asia/Singapore timezone data to use time-of-day reports.") from None
+    for row in rows:
+        try:
+            if metric == "weekday":
+                index = date.fromisoformat(row[0]).weekday()
+            else:
+                # Only verified UTC instants contribute to the local-clock histogram.
+                instant = datetime.fromisoformat(row[-1])
+                if instant.utcoffset() != timedelta(0):
+                    continue
+                index = instant.astimezone(zone).hour // 6
+        except (TypeError, ValueError, OverflowError):
+            continue
+        counts[labels[index]] += 1
+    highest = max(counts.values())
+    return {
+        "eligible_runs": sum(counts.values()),
+        "buckets": counts,
+        "most_common": [label for label, count in counts.items() if highest and count == highest],
+    }
+
+
+def running_records(path, metric, mode="all_time", start=None, end=None, year=None, distance_band=None, *, today=None):
+    validate_record_options(metric, mode, distance_band)
+    today = today if today is not None else reporting_today()
+    first, last = report_window(mode, start, end, year, today)
+    with closing(db.connect(path, "ro")) as connection, connection:
+        connection.execute("BEGIN")
+        rows = read_runs(connection, db.check_schema(connection), first, last,
+                         include_start=metric == "time_of_day")
+    metrics = fastest_pace(rows, distance_band) if metric == "fastest_pace" else running_histogram(rows, metric)
+    return {
+        "status": "empty" if not rows else "ok" if metrics["eligible_runs"] else "unavailable",
+        "reporting_timezone": REPORTING_ZONE,
+        "metric": metric, "mode": mode, "distance_band": distance_band,
+        "start": None if mode == "all_time" else first.isoformat(), "end": last.isoformat(),
+        "runs": len(rows),
+        **metrics,
+    }
 
 
 def report_bounds(mode, start, end, year, today):

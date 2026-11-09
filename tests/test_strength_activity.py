@@ -96,7 +96,7 @@ def test_chat_strength_evidence_matches_cli(database, monkeypatch, capsys):
     client = FakeClient(response(strength_call(exercise)), response(text="Recorded sets only."))
     llm.answer(client, "model", database, "How many sets of invented press have I recorded all time?")
     first, second = client.requests
-    tool = first["tools"][-1]
+    tool = next(tool for tool in first["tools"] if tool["name"] == "get_strength_progress")
     assert tool["name"] == "get_strength_progress"
     assert tool["strict"] is True
     assert "exercise" in tool["parameters"]["required"]

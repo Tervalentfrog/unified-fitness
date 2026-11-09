@@ -169,6 +169,26 @@ In chat, try “Is my running pace improving?”, “Show my running history by
 year”, or “What is my all-time running distance?” Chat can use one report
 per turn and displays its local evidence before model commentary.
 
+## Check running records and patterns
+
+~~~powershell
+.\.venv\Scripts\unified-fitness.exe running-records fastest_pace --distance-band 5_to_under_10_km
+.\.venv\Scripts\unified-fitness.exe running-records weekday
+.\.venv\Scripts\unified-fitness.exe running-records time_of_day --mode year --year 2024
+~~~
+
+Fastest pace uses the whole run's average moving pace and reports ties.
+Choose `under_5_km`, `5_to_under_10_km`, or `10_km_or_more`. Time of day
+counts recorded UTC starts in six-hour Singapore clock buckets. Weekday
+uses stored Singapore reporting dates. Both report ties and coverage.
+Reports default to all recorded history. Use `--mode year --year YYYY`
+or `--mode range --from YYYY-MM-DD --to YYYY-MM-DD` to narrow the scope.
+
+In chat, try “What was my fastest moving pace for runs 5 to under 10 km?”
+or “Which weekday do I run most often?” A broad running-period question
+can prompt for weekday or time of day. Exact-distance finish times,
+splits, and seasonal patterns remain deferred.
+
 ## Review strength activity
 
 Use the full exercise name shown by `summary`. Names match case-insensitively

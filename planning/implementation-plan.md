@@ -310,8 +310,26 @@ summary and confirmed the database hash was unchanged. The launcher emitted
 the existing Python path warning. Chat tests used a fake client. Live model
 routing remains unverified.
 
-Load-based strength progression and running records remain deferred.
+Load-based strength progression remains deferred.
 No schema migration or new dependency was needed.
+
+## Running records slice
+
+Implement the [record and pattern contract](training-trends-design.md#running-records-and-patterns)
+in analytics.py with read-only SQLite. Wire the offline command before
+adding the chat tool. Verify pace ranking and coverage, weekday and
+Singapore time buckets, ties, argument validation, and the existing
+provider payload boundary. Exact-distance finish times, splits, seasonal
+patterns, and load-based progression remain outside this slice.
+
+Implemented the offline `running-records` command and the allowlisted
+`get_running_records` tool. After review, the Windows venv suite passed
+138 tests with
+`.\.venv\Scripts\python.exe -m pytest -q --basetemp data/pytest-running-records-review`.
+All three installed CLI metrics returned usable evidence on the local
+database and its hash was unchanged. The launcher emitted the existing
+Python path warning. Chat tests used a fake client. Live routing remains
+unverified.
 
 ## Initialization verification
 

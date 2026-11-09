@@ -9,8 +9,8 @@ from pathlib import Path
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from .analytics import (
-    PERIOD_MODES, monday, report_bounds, report_dates, reporting_today, running_trends, strength_activity,
-    weekly_summary,
+    DISTANCE_BANDS, PERIOD_MODES, RECORD_METRICS, RECORD_MODES, monday, report_bounds, report_dates,
+    reporting_today, running_records, running_trends, strength_activity, validate_record_options, weekly_summary,
 )
 from .db import FitnessError
 
@@ -70,6 +70,27 @@ STRENGTH_TOOL = {
         "additionalProperties": False,
     },
 }
+RECORD_PROPERTIES = {
+    **PERIOD_PROPERTIES,
+    "mode": {"type": "string", "enum": list(RECORD_MODES)},
+    "metric": {"type": "string", "enum": list(RECORD_METRICS)},
+    "distance_band": {"enum": [*DISTANCE_BANDS, None], "type": ["string", "null"]},
+}
+RECORD_TOOL = {
+    "type": "function",
+    "name": "get_running_records",
+    "description": (
+        "Find fastest whole-run average moving pace in a user-selected distance band, or count runs "
+        "by weekday or Singapore time of day. Ask for the missing band or pattern dimension. "
+        "Default to all_time when no period is requested. No splits, finish-time records, or seasons."
+    ),
+    "strict": True,
+    "parameters": {
+        "type": "object", "properties": RECORD_PROPERTIES,
+        "required": list(RECORD_PROPERTIES), "additionalProperties": False,
+    },
+}
+TOOLS = [TOOL, RUNNING_TOOL, STRENGTH_TOOL, RECORD_TOOL]
 INSTRUCTIONS = (
     "Answer general questions directly. Never make claims about the user's recorded training "
     "without tool evidence. If the question needs a date range and it is unclear, "
@@ -79,6 +100,9 @@ INSTRUCTIONS = (
     "In running comparisons use pace_direction and eligible distance bands; overall pace is descriptive. "
     "For exercise-specific strength questions use the exact exercise wording from the user. "
     "Strength sets, reps and recorded days do not establish strength gains or load-based volume. "
+    "Use get_running_records for fastest moving pace or common run periods, asking which distance band "
+    "(under 5 km, 5 to under 10 km, or 10 km or more) or pattern (weekday or time of day) if unclear. "
+    "Explain that exact-distance finish times, splits, and seasonal patterns are unavailable. "
     "Never infer inactivity or improvement from empty periods or infer causal effects. "
     "If the available tool cannot answer the question, explain the specific limitation. "
     "Use only the supplied evidence for claims about recorded training. Explain relevant missing "
@@ -106,6 +130,12 @@ DATE_REPLY = (
     rf"(?:{RELATIVE_PERIOD}|{ISO_DATE}(?:\s+(?:to|through)\s+{ISO_DATE})?"
     rf"|(?:in\s+)?\d{{4}}|{YEARLY_SCOPE}|{ALL_TIME_SCOPE})[.!]?"
 )
+BAND_PHRASES = {
+    "under_5_km": r"\b(?:under|below|less than)\s+5\s*km\b",
+    "5_to_under_10_km": r"(?<![\w.])5\s*(?:km\s*)?(?:to|[-–])\s*(?:under\s+)?10\s*km\b",
+    "10_km_or_more": r"(?:(?<![\w.])10\s*km\s*(?:or more\b|and up\b|\+)|\bat least\s+10\s*km\b)",
+}
+RECORD_REPLY = r"(?:weekday|day of (?:the )?week|time of day|" + "|".join(BAND_PHRASES.values()) + r")[.!]?"
 
 
 def request(client, model, items, *, allow_tool, resolved=None):
@@ -115,12 +145,12 @@ def request(client, model, items, *, allow_tool, resolved=None):
         options["text"] = {"format": REPLY_FORMAT}
         instructions += (
             " If no tool is called, classify the reply as answer for general information, "
-            "clarification for a missing date range, or unavailable for unsupported analysis."
+            "clarification for missing details, or unavailable for unsupported analysis."
         )
     if resolved:
         instructions += f" The locally resolved reporting range is {resolved[0]} through {resolved[1]}."
     response = client.responses.create(
-        model=model, input=items, instructions=instructions, tools=[TOOL, RUNNING_TOOL, STRENGTH_TOOL],
+        model=model, input=items, instructions=instructions, tools=TOOLS,
         tool_choice="auto" if allow_tool else "none", parallel_tool_calls=False,
         max_output_tokens=1024, store=False, include=["reasoning.encrypted_content"], **options,
     )
@@ -154,13 +184,12 @@ def tool_dates(arguments):
     return start, end
 
 
-def period_arguments(arguments, today, *, strength):
+def period_arguments(arguments, today, *, tool):
     try:
-        if not isinstance(arguments, str) or len(arguments) > (2048 if strength else 256):
+        if not isinstance(arguments, str) or len(arguments) > (2048 if tool is STRENGTH_TOOL else 256):
             raise ValueError
         fields = json.loads(arguments, object_pairs_hook=unique_fields)
-        expected = set(PERIOD_PROPERTIES) | ({"exercise"} if strength else set())
-        if not isinstance(fields, dict) or fields.keys() != expected:
+        if not isinstance(fields, dict) or fields.keys() != tool["parameters"]["properties"].keys():
             raise ValueError
     except ValueError:
         raise FitnessError("OpenAI requested invalid report arguments.") from None
@@ -168,7 +197,7 @@ def period_arguments(arguments, today, *, strength):
     return fields
 
 
-def period_scope_matches(fields, question):
+def period_scope_matches(fields, question, *, default_all_time=False):
     mode = fields["mode"]
     explicit_dates = re.findall(ISO_DATE, question)
     years = re.findall(r"\b\d{4}\b", re.sub(ISO_DATE, "", question))
@@ -180,7 +209,11 @@ def period_scope_matches(fields, question):
     if mode == "yearly":
         return not (years or explicit_dates) and bool(yearly or historical_trend)
     if mode == "all_time":
-        return not (years or explicit_dates or yearly or historical_trend) and bool(all_time)
+        relative = re.search(r"\b(?:this|last|past|previous)\s+(?:\w+\s+)?(?:days?|weeks?|months?|years?)\b",
+                             question, re.I)
+        return not (years or explicit_dates or yearly or historical_trend or relative) and (
+            default_all_time or bool(all_time)
+        )
     if yearly or all_time or years:
         return False
     if mode == "comparison" and fields["start"] is None:
@@ -233,33 +266,39 @@ def answer(client, model, path, question, *, pending=None):
     if len(question) > MAX_QUESTION_CHARS:
         raise FitnessError(f"Keep questions to {MAX_QUESTION_CHARS} characters.")
     items = [{"role": "user", "content": question}]
-    if pending and re.fullmatch(DATE_REPLY, question, re.IGNORECASE):
+    record_reply = pending and re.fullmatch(RECORD_REPLY, question, re.IGNORECASE)
+    if pending and (record_reply or re.fullmatch(DATE_REPLY, question, re.IGNORECASE)):
         items.insert(0, {"role": "user", "content": pending})
     else:
         pending = None
+    context = "\n".join(item["content"] for item in items)
+    clarification_context = context if len(context) <= MAX_QUESTION_CHARS else None
     resolved = None
-    has_relative_period = re.search(RELATIVE_PERIOD, question, re.IGNORECASE)
+    scope_text = pending if record_reply else question
+    has_relative_period = re.search(RELATIVE_PERIOD, scope_text, re.IGNORECASE)
     if has_relative_period:
         try:
             today = datetime.now(ZoneInfo("Asia/Singapore")).date()
         except ZoneInfoNotFoundError:
             raise FitnessError("Install Asia/Singapore timezone data to use relative dates.") from None
-        resolved = relative_dates(question, today)
+        resolved = relative_dates(scope_text, today)
     first = request(client, model, items, allow_tool=True, resolved=resolved)
     calls = [item for item in first.output if item.type == "function_call"]
     if not calls:
-        return (pending or question) if direct_reply(first) else None
+        return clarification_context if direct_reply(first) else None
     if len(calls) != 1:
         raise FitnessError("OpenAI requested more than one tool call.")
     call = calls[0]
-    if call.name not in (TOOL["name"], RUNNING_TOOL["name"], STRENGTH_TOOL["name"]) or not call.call_id:
+    tool = next((candidate for candidate in TOOLS if candidate["name"] == call.name), None)
+    if tool is None or not call.call_id:
         raise FitnessError("OpenAI requested an invalid tool call.")
-    is_running = call.name == RUNNING_TOOL["name"]
-    is_strength = call.name == STRENGTH_TOOL["name"]
-    uses_periods = is_running or is_strength
+    is_running = tool is RUNNING_TOOL
+    is_strength = tool is STRENGTH_TOOL
+    is_records = tool is RECORD_TOOL
+    uses_periods = tool is not TOOL
     if uses_periods:
         today = today if has_relative_period else reporting_today()
-        fields = period_arguments(call.arguments, today, strength=is_strength)
+        fields = period_arguments(call.arguments, today, tool=tool)
         start, end = fields["start"], fields["end"]
     else:
         start, end = tool_dates(call.arguments)
@@ -268,15 +307,35 @@ def answer(client, model, path, question, *, pending=None):
         return pending or question
     if resolved and (start, end) != resolved:
         raise FitnessError("OpenAI requested dates outside the resolved reporting range. Try explicit dates.")
-    if uses_periods and not period_scope_matches(fields, question):
+    if uses_periods and not period_scope_matches(fields, scope_text, default_all_time=is_records):
         raise FitnessError("The report scope did not match the question. Try specifying the period.")
-    if resolved is None and (not uses_periods or start is not None or re.search(ISO_DATE, question)):
-        supplied_dates = tuple(re.findall(ISO_DATE, question))
+    if resolved is None and (not uses_periods or start is not None or re.search(ISO_DATE, scope_text)):
+        supplied_dates = tuple(re.findall(ISO_DATE, scope_text))
         same_day = start == end and supplied_dates == (start,)
         if supplied_dates != (start, end) and not same_day:
             print("Which date range should I use? Give both dates as YYYY-MM-DD.")
             return pending or question
-    report_name = "running trends" if is_running else "strength activity" if is_strength else "weekly"
+    report_name = {
+        TOOL["name"]: "weekly", RUNNING_TOOL["name"]: "running trends",
+        STRENGTH_TOOL["name"]: "strength activity", RECORD_TOOL["name"]: "running records",
+    }[call.name]
+    if is_records:
+        if fields["metric"] == "fastest_pace" and fields["distance_band"] is None:
+            print("Which distance band: under 5 km, 5 to under 10 km, or 10 km or more?")
+            return clarification_context
+        validate_record_options(fields["metric"], fields["mode"], fields["distance_band"])
+        user_text = " ".join(item["content"] for item in items)
+        if fields["metric"] == "fastest_pace":
+            bands = [band for band, phrase in BAND_PHRASES.items() if re.search(phrase, user_text, re.I)]
+            if bands != [fields["distance_band"]]:
+                print("Which distance band: under 5 km, 5 to under 10 km, or 10 km or more?")
+                return clarification_context
+        else:
+            weekday = bool(re.search(r"\b(?:weekdays?|day of (?:the )?week)\b", user_text, re.I))
+            clock = bool(re.search(r"\b(?:time of day|what time|morning|afternoon|evening)\b", user_text, re.I))
+            if weekday == clock or weekday != (fields["metric"] == "weekday"):
+                print("Do you mean weekday or time of day?")
+                return clarification_context
     if is_strength and fields["exercise"] is not None:
         exercise = fields["exercise"]
         user_text = " ".join(item["content"] for item in items).casefold()
@@ -285,7 +344,8 @@ def answer(client, model, path, question, *, pending=None):
             raise FitnessError("Use the full exercise name from your question.")
     try:
         if uses_periods:
-            calculate = strength_activity if is_strength else running_trends
+            calculate = {RUNNING_TOOL["name"]: running_trends, STRENGTH_TOOL["name"]: strength_activity,
+                         RECORD_TOOL["name"]: running_records}[call.name]
             report = calculate(path, **fields, today=today)
         else:
             report = weekly_summary(path, start, end)
@@ -310,11 +370,15 @@ def answer(client, model, path, question, *, pending=None):
         bounds is None for bounds in report["observed_dates"].values()
     )
     if empty:
-        print("No stored runs in this report." if is_running else "No stored training records in this date range.")
+        print("No stored runs in this report." if is_running or is_records
+              else "No stored training records in this date range.")
         if is_running and fields["mode"] == "comparison":
             print("Try an explicit historical range if your recent running history is sparse.")
         return
-    if uses_periods and "empty_comparison_period" in report["limitations"]:
+    if is_records and report["status"] == "unavailable":
+        print("No stored runs have usable evidence for this record or pattern.")
+        return
+    if (is_running or is_strength) and "empty_comparison_period" in report["limitations"]:
         print("One comparison period has no stored records. Try an explicit historical range.")
     print("Null metrics are unavailable. Coverage counts show how many records had usable inputs.")
 

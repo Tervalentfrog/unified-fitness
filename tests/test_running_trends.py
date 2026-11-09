@@ -140,7 +140,7 @@ def test_chat_running_evidence_matches_offline(tmp_path, monkeypatch, capsys, mo
     llm.answer(client, "model", path, question)
     first, second = client.requests
     assert [tool["name"] for tool in first["tools"]] == [
-        "get_weekly_summary", "get_running_trends", "get_strength_progress",
+        "get_weekly_summary", "get_running_trends", "get_strength_progress", "get_running_records",
     ]
     assert first["parallel_tool_calls"] is False
     assert second["tool_choice"] == "none"

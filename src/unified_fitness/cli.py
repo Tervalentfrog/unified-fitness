@@ -7,7 +7,8 @@ import sys
 from pathlib import Path
 
 from .analytics import (
-    PERIOD_MODES, running_summary, running_trends, strength_activity, strength_summary, weekly_summary,
+    DISTANCE_BANDS, PERIOD_MODES, RECORD_METRICS, RECORD_MODES, running_records, running_summary,
+    running_trends, strength_activity, strength_summary, weekly_summary,
 )
 from .db import FitnessError
 from .ingestion import fitnotes, strava
@@ -34,6 +35,13 @@ def main(argv=None):
         report_parser.add_argument("--to", dest="end", help="inclusive YYYY-MM-DD end")
         report_parser.add_argument("--year", type=int, help="calendar year for year mode")
     strength.add_argument("--exercise", help="full exercise name, matched case-insensitively")
+    records = commands.add_parser("running-records", help="report fastest moving pace or common run periods")
+    records.add_argument("metric", choices=RECORD_METRICS)
+    records.add_argument("--mode", choices=RECORD_MODES, default="all_time")
+    records.add_argument("--from", dest="start", help="inclusive YYYY-MM-DD start")
+    records.add_argument("--to", dest="end", help="inclusive YYYY-MM-DD end")
+    records.add_argument("--year", type=int, help="calendar year for year mode")
+    records.add_argument("--distance-band", choices=DISTANCE_BANDS, help="required for fastest_pace")
     weekly = commands.add_parser("weekly-summary", help="report Monday-start training weeks")
     weekly.add_argument("--from", dest="start", required=True, help="inclusive YYYY-MM-DD start")
     weekly.add_argument("--to", dest="end", required=True, help="inclusive YYYY-MM-DD end")
@@ -53,6 +61,11 @@ def main(argv=None):
             return 0
         if args.command == "strength-activity":
             report = strength_activity(args.db, args.mode, args.start, args.end, args.year, args.exercise)
+            print(json.dumps(report, indent=2, allow_nan=False))
+            return 0
+        if args.command == "running-records":
+            report = running_records(args.db, args.metric, args.mode, args.start, args.end,
+                                     args.year, args.distance_band)
             print(json.dumps(report, indent=2, allow_nan=False))
             return 0
         if args.command == "weekly-summary":
