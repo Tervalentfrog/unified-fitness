@@ -1,6 +1,12 @@
-# Proposed architecture
+# Architecture
 
-Status: proposal for review, 2026-11-09. No application code or DDL implemented.
+Status: FitNotes discovery recommendations accepted on 2026-11-09. No application
+code or DDL implemented; unverified source mappings remain validation gates.
+
+The first backup has now been inspected: see [FitNotes discovery](fitnotes-discovery.md).
+The accepted design keeps four tables, preserves source flags/type codes, and starts
+with a reps-focused report. Weight encodings and ID stability across backups remain
+unverified; the target model below does not imply a fully validated source contract.
 
 ## Scope and boundaries
 
@@ -22,24 +28,85 @@ Planned modules inside `src/unified_fitness/` (create only with working features
 Flow: local file -> source adapter -> validated records -> SQLite -> analytical
 functions -> CLI report or tool result -> optional AI explanation.
 
+```mermaid
+flowchart LR
+    F[FitNotes backup] --> FI[FitNotes importer]
+    S[Strava CSV] --> SI[Strava importer]
+    FI --> DB[(Local SQLite)]
+    SI --> DB
+    DB --> A[Fixed analytical functions]
+    A --> R[Offline console report]
+    U[Your question] --> C[Chat controller]
+    C <-->|Question and selected results / tool requests and answer| O[OpenAI API]
+    C -->|Validate and dispatch allowed tools| A
+    A -->|Measured results| C
+    C --> E[Answer with facts and interpretation]
+```
+
+The chat controller mediates every tool request. OpenAI has no direct database access.
+
 Adapters expose the same small callable contract: `import_file(path, connection,
 options) -> ImportReport`. Report inserted, updated, unchanged, rejected, and
 unsupported counts plus bounded diagnostics (row/source ID and reason, not full
 personal records). A shared report type is sufficient; no abstract base class or
 dynamic plugin registry. Source adapters own mapping; persistence owns writes.
 
-## Proposed relational model
+## Target relational model
 
 Internal primary keys are integers; source identifiers are TEXT to preserve their
 exact representation. `source` is a stable namespace (`fitnotes` or `strava`).
 Source fields below are canonical requirements, not claims about export columns.
 
-| Table | Proposed columns and constraints |
+| Table | Planned columns and constraints |
 | --- | --- |
 | `imports` | `id` PK, `source`, `file_sha256`, `imported_at_utc`, `adapter_version`, `options_json`, outcome counts; one row per committed attempt |
 | `running_activities` | `id` PK, `source`, `source_record_id`, `activity_date`, nullable `started_at_raw`, `started_at_utc`, `timezone_name`, `distance_m`, `moving_time_s`, `elapsed_time_s`, `elevation_gain_m`; `last_import_id` FK; UNIQUE (`source`, `source_record_id`) |
-| `exercises` | `id` PK, `source`, `source_exercise_id`, `name`; UNIQUE (`source`, `source_exercise_id`) |
-| `strength_sets` | `id` PK, `source`, `source_record_id`, `exercise_id` FK, `performed_on`, nullable `repetitions`, `load_kg`, `source_load`, `source_load_unit`, `load_kind`, `set_order`; `last_import_id` FK; UNIQUE (`source`, `source_record_id`) |
+| `exercises` | `id` PK, `source`, `source_exercise_id`, `name`; nullable INTEGER `source_type_id`, `source_weight_unit_id`; UNIQUE (`source`, `source_exercise_id`) |
+| `strength_sets` | `id` PK, `source`, `source_record_id`, `exercise_id` FK, `performed_on`, nullable `repetitions`, `load_kg`, `source_load`, `source_load_unit`, `load_kind`, `set_order`; nullable INTEGER `source_unit_code`, `source_is_complete`, `source_is_pending_update`; `last_import_id` FK; UNIQUE (`source`, `source_record_id`) |
+
+For the first FitNotes slice, import only exercises referenced by accepted sets.
+Preserve `metric_weight` in `source_load` and retain the raw type/unit/flag codes.
+Leave `source_load_unit`, `load_kg`, `load_kind`, and `set_order` NULL until their
+meaning is established. Store source schema version, relevant settings, and the
+explicit completion policy in the existing import `options_json`; no extra table.
+
+```mermaid
+erDiagram
+    IMPORTS ||--o{ RUNNING_ACTIVITIES : "last imported"
+    IMPORTS ||--o{ STRENGTH_SETS : "last imported"
+    EXERCISES ||--o{ STRENGTH_SETS : "describes"
+    IMPORTS {
+        integer id PK
+        text source
+        text file_sha256
+    }
+    RUNNING_ACTIVITIES {
+        integer id PK
+        text source_record_id
+        text activity_date
+        real distance_m
+        real moving_time_s
+        integer last_import_id FK
+    }
+    EXERCISES {
+        integer id PK
+        text source_exercise_id
+        text name
+    }
+    STRENGTH_SETS {
+        integer id PK
+        text source_record_id
+        text performed_on
+        integer repetitions
+        real load_kg
+        integer exercise_id FK
+        integer last_import_id FK
+    }
+```
+
+Diagram shows selected columns. Each exercise can have many sets; each record points
+to the import that last inserted or changed it. This is provenance, not full revision
+history. Create tables only when their source milestone needs them.
 
 Foreign keys enabled on every connection. Required identifiers and calendar dates
 are NOT NULL. Validate finite, nonnegative distance/duration/load values and integer
@@ -67,14 +134,24 @@ with both a run and lifting counts once).
 - Prefer stable source keys for repeatable imports. Never deduplicate sets by
   exercise/date/weight/reps: identical sets can be legitimate. If stable IDs are
   absent, stop and agree on a tested identity policy before implementing that source.
+  FitNotes `training_log._id` identifies sets in this backup; test ID stability
+  through controlled edits/reordering before promising cross-backup updates.
+- Include the inspected backup's user-confirmed performed sets regardless of
+  `is_complete` or `is_pending_update`, preserving both flags and recording the
+  policy. Do not generalize that confirmation to future backups or infer historical
+  completion from the current app setting. Unsupported types/metrics are counted.
 - Same IDs and payloads are unchanged; changed payloads update existing rows. A file
   hash records provenance, not record identity, and does not automatically skip an
   import (adapter fixes may need reprocessing). No deletion when an ID disappears.
   Without reliable source modification times, the most recently imported values
   win, even from an older export; report updates and document this limitation.
 - Preflight format errors cause no writes. Reject malformed required fields or
-  ambiguous identities with reasons. Missing optional fields become NULL; malformed
-  optional values become NULL with warnings only when the core record remains valid.
+  ambiguous identities with reasons. Distinguish an absent optional column from an
+  explicitly empty value: absent columns preserve existing values on update (NULL
+  on insert); explicit empties clear a value only if the validated source contract
+  defines them as missing. A malformed optional value may become NULL with a warning
+  on insert; on update, reject that record and preserve its existing values rather
+  than silently erase valid history. Include warnings in the import report.
   Commit all accepted records and the import report in one transaction; unexpected
   errors roll back the entire attempt. Failed attempts print diagnostics, not a
   misleading successful audit row. Conflicting duplicate IDs in one file fail preflight.
@@ -86,15 +163,25 @@ with both a run and lifting counts once).
 - Preserve date-only FitNotes records as dates. Store UTC only when the source has an
   offset or an explicitly confirmed timezone mapping; retain raw timestamp text.
   Never fabricate midnight or label naive times UTC. Reject unresolved calendar-date
-  ambiguity. Choose one reporting timezone (proposed `Asia/Singapore`) and record
+  ambiguity. Use the confirmed reporting timezone (`Asia/Singapore`) and record
   assumptions in import options; historical travel/DST semantics need validation.
+  `activity_date` is the date in that reporting timezone when the instant is known;
+  date-only records retain their recorded date. Keep the reporting timezone fixed
+  per database, checking it against committed import options before subsequent
+  imports. Reject a changed setting until an explicit rebuild/reimport is performed;
+  do not silently mix dates calculated under different timezone policies.
 
 ## Analytics and AI boundary
 
-Start with a deterministic running summary, training-day counts, and per-exercise
-strength progression. Date ranges use inclusive ISO calendar dates; weeks start
-Monday. Return range, units, source coverage, sample counts, and missing/excluded
-counts alongside values. Missing history is not proof of inactivity.
+The first FitNotes report provides per-exercise set/repetition totals and recorded
+training days. Add running summaries with Strava; defer load-based progression and
+volume until units and load semantics are validated. Date ranges use inclusive ISO
+calendar dates; weeks start Monday (confirmed). Return range, units, observed source
+date ranges, sample counts, and counts
+of stored records missing/excluded from each calculation. Import-level rejection
+totals are separate diagnostics: they cannot reliably be assigned to a requested
+date range, especially when rejected dates are invalid. Observed date ranges do
+not establish complete coverage; missing history is not proof of inactivity.
 
 Pace = summed valid moving seconds / summed corresponding distance in kilometers;
 exclude zero distances and never silently substitute elapsed time. Show duration

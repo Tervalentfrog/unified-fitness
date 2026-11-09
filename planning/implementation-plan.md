@@ -1,14 +1,21 @@
 # Implementation plan
 
-Status: initialization complete; implementation awaits review. Each milestone should
+Status: FitNotes discovery recommendations accepted on 2026-11-09; no importer
+implemented. Each milestone should
 leave a small working increment. Do not implement all source adapters before proving
 one complete import -> database -> deterministic report workflow.
+
+FitNotes discovery is documented in [fitnotes-discovery.md](fitnotes-discovery.md).
+Its schema and current records are inspected, but weight/unit encodings and ID
+stability across backups remain unverified. The accepted first report is sets,
+reps, and recorded training days; load-based progression waits for unit validation.
+No importer has been implemented, and Strava discovery has not started.
 
 | Priority | Milestone | Completion evidence |
 | --- | --- | --- |
 | 0 | Planning and scaffold (this change) | Empty repository inspected; packaging, exclusions, documentation, and Git initialized; no app functionality |
 | 1 | Validate source contracts | Inspect actual FitNotes backup read-only; inspect Strava CSV if available; document tables/keys, units, dates, supported records and identity policy; hand-author synthetic fixture specification |
-| 2 | First offline vertical slice: FitNotes | Minimal schema + FitNotes adapter + CLI import + one per-exercise report; repeated import unchanged; edited source record updates once; real backup remains unchanged |
+| 2 | First offline vertical slice: FitNotes | Minimal schema with accepted source metadata + adapter + CLI import + per-exercise set/repetition totals and recorded training days; repeated import unchanged; edited source record updates once after ID stability validation; real backup remains unchanged |
 | 3 | Add Strava running | CSV adapter + running summary; validated units/dates and moving vs elapsed time; duplicate and overlapping export imports stable |
 | 4 | Shared deterministic analytics | Weekly training days across sources, running trends and strength progression; explicit coverage, missing-data behavior, and reproducible calculations |
 | 5 | Interactive AI console | OpenAI SDK + strict tool schemas + bounded loop; answers backed by metrics; offline commands work without a key; API and tool failures handled |
@@ -24,14 +31,20 @@ after validating that source. Do not invent a FitNotes schema to keep coding.
   under ignored `data/`. Reconstruct tiny synthetic fixtures rather than anonymizing
   a full private backup.
 - Milestone 2: use pytest temporary databases for duplicate legitimate sets, repeat
-  imports, changed IDs' payloads, missing fields, mixed units, unsupported schemas,
-  incomplete sets, foreign keys, and transaction rollback on unexpected failure.
-  Assert exact counts and known normalized values; compare source hashes before/after.
+  imports, changed IDs' payloads, missing fields, unsupported types/metrics/schemas,
+  completion policy, raw flag preservation, foreign keys, and transaction rollback.
+  Verify the confirmed backup's zero completion flags do not discard performed sets;
+  preserve raw zero loads without claiming known kilograms, bodyweight, or set order.
+  Verify missing columns and malformed updates cannot silently erase valid values.
+  Assert exact set/repetition/day counts; compare source hashes before/after.
+  Add mixed-unit and normalized-load tests when those mappings are validated.
 - Milestone 3: test quoted CSV fields, duplicate headers, numeric/date errors, unknown
   units, unrelated sports, overlapping exports, zero distance, and missing moving time.
 - Milestone 4: hand-calculated expected metrics; empty database, inclusive boundaries,
   week/year transitions, timezone offsets, date-only lifting records, same-day overlap,
   incomplete coverage, and incompatible load kinds. No network required.
+  Reject reporting-timezone changes on an existing imported database; keep import
+  rejection totals distinct from date-filtered analytical exclusions.
 - Milestone 5: fake API responses cover unknown tools, invalid arguments, multiple
   tool calls, empty results, exhaustion of limits, rate limits and authentication
   errors. Check answer evidence and measured/interpretive separation against a short
@@ -42,13 +55,15 @@ after validating that source. Do not invent a FitNotes schema to keep coding.
 
 ## Immediate next task and prerequisites
 
-Review the proposed architecture, then select a usable Python 3.11+ interpreter and
-inspect a local `.fitnotes` backup. Discover its real schema, stable row identity,
-unit overrides, completion semantics, and date precision. Write a short mapping
-note and synthetic fixture specification before writing importer code.
+The discovery findings and source metadata fields are accepted. `py` now runs
+Python 3.14.10 successfully for read-only discovery; package installation remains
+unverified. Validate installation and define synthetic fixtures for the agreed
+reps-focused slice before writing importer code. Validate ID stability before
+supporting cross-backup updates; weight encoding need not block reps-only reports,
+but must be established before adding normalized-load analytics.
 
 Needed before the relevant milestone: a FitNotes backup, a Strava personal export
-CSV, confirmation of reporting timezone/unit ambiguities, and later an API key plus
+CSV, resolution of source timezone/unit ambiguities, and later an API key plus
 an account-accessible tool-capable model. None is needed to review this scaffold.
 
 ## Initialization verification
@@ -62,5 +77,6 @@ the first functional slice.
 
 Filesystem checks confirmed all ten scaffold files exist, local Markdown links
 resolve, and no trailing whitespace was found. Git ignore checks covered personal
-data, database sidecars, environment files, and synthetic CSV exceptions. Git is
-initialized on `main`, with no files staged and no commits created.
+data, database sidecars, environment files, and synthetic CSV exceptions. At the
+end of kickoff, Git was initialized on `main` with no staging or commits; this is
+a historical verification record, not a statement about the current Git state.
